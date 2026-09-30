@@ -263,7 +263,13 @@
       "expectedSelection": [
         7,
         0
-      ]
+      ],
+      "nativeExpectedText": "hello\n",
+      "nativeExpectedSelection": [
+        6,
+        0
+      ],
+      "nativeReason": "Native Enter inserts one newline; the Qt reference retains its double-newline paragraph behavior."
     },
     {
       "id": "return-soft",
@@ -403,7 +409,13 @@
       "expectedSelection": [
         14,
         0
-      ]
+      ],
+      "nativeExpectedText": "```\ncode\n```\n",
+      "nativeExpectedSelection": [
+        13,
+        0
+      ],
+      "nativeReason": "Native Enter inserts one newline; the Qt reference retains its double-newline paragraph behavior."
     },
     {
       "id": "return-replaces-selection",
@@ -417,7 +429,13 @@
       "expectedSelection": [
         7,
         0
-      ]
+      ],
+      "nativeExpectedText": "hello\n",
+      "nativeExpectedSelection": [
+        6,
+        0
+      ],
+      "nativeReason": "Native Enter inserts one newline; the Qt reference retains its double-newline paragraph behavior."
     },
     {
       "id": "return-empty-list-with-selection",
@@ -490,7 +508,13 @@
       "expectedSelection": [
         9,
         0
-      ]
+      ],
+      "nativeExpectedText": "١. item\n",
+      "nativeExpectedSelection": [
+        8,
+        0
+      ],
+      "nativeReason": "Native Enter inserts one newline; the Qt reference retains its double-newline paragraph behavior."
     },
     {
       "id": "return-entire-list-forward",
@@ -506,7 +530,13 @@
         2,
         0
       ],
-      "nativeDifference": "Native Return uses the replacement start, not the active selection end."
+      "nativeDifference": "Native Return uses the replacement start, not the active selection end.",
+      "nativeExpectedText": "\n",
+      "nativeExpectedSelection": [
+        1,
+        0
+      ],
+      "nativeReason": "Native Enter inserts one newline; the Qt reference retains its double-newline paragraph behavior."
     },
     {
       "id": "return-entire-list-backward",
@@ -521,7 +551,13 @@
       "expectedSelection": [
         2,
         0
-      ]
+      ],
+      "nativeExpectedText": "\n",
+      "nativeExpectedSelection": [
+        1,
+        0
+      ],
+      "nativeReason": "Native Enter inserts one newline; the Qt reference retains its double-newline paragraph behavior."
     },
     {
       "id": "paste-url-parentheses",

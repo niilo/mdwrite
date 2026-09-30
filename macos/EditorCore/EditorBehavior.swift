@@ -137,26 +137,47 @@ public enum EditorBehavior {
         let lineStart = (before as NSString).range(of: "\n", options: .backwards).location
         let start = lineStart == NSNotFound ? 0 : lineStart + 1
         let line = nsSource.substring(with: NSRange(location: start, length: selection.location - start))
-        if matches(#"(?m)^\s*```"#, in: before).count % 2 == 1 {
-            return replacing(selection, with: "\n")
+        let codeContext = MarkdownSyntax.runs(in: source).first {
+            $0.isCodeBlock && $0.range.location <= selection.location && NSMaxRange($0.range) >= selection.location
         }
-        if let match = matches(#"^(\s*)([-+*]|[0-9]+[.)]|>+)\s+(.*)$"#, in: line).first {
-            let nsLine = line as NSString
+        let code = MarkdownBlocks.parse(before).contains {
+            $0.kind == .fencedCode && $0.markers.count == 1 && NSMaxRange($0.range) == before.utf16.count
+        } || codeContext != nil
+        let indentedContinuation = (line.hasPrefix("    ") || line.hasPrefix("\t"))
+            && matches(#"^[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+"#, in: line).isEmpty
+        if code || indentedContinuation {
+            let inQuote = codeContext?.presentation?.components.contains { $0.kind == .blockQuote } ?? false
+            let quote = inQuote ? matches(#"^[ \t]*(?:>[ \t]?)+"#, in: line).first : nil
+            let prefix = quote.map { (line as NSString).substring(with: $0.range) } ?? ""
+            let content = (line as NSString).substring(from: prefix.utf16.count)
+            let indent = matches(#"^[ \t]*"#, in: content).first.map { (content as NSString).substring(with: $0.range) } ?? ""
+            return replacing(selection, with: "\n" + prefix + indent)
+        }
+        let quote = matches(#"^[ \t]*(?:>[ \t]?)+"#, in: line).first
+        let quotePrefix = quote.map { (line as NSString).substring(with: $0.range) } ?? ""
+        let contentLine = (line as NSString).substring(from: quotePrefix.utf16.count)
+        if !quotePrefix.isEmpty && contentLine.trimmingCharacters(in: .whitespaces).isEmpty {
+            return replacing(NSRange(location: start, length: NSMaxRange(selection) - start), with: "\n")
+        }
+        if let match = matches(#"^([ \t]*)([-+*]|[0-9]+[.)])[ \t]+(?:\[([ xX])\][ \t]+)?(.*)$"#, in: contentLine).first {
+            let nsLine = contentLine as NSString
             let indent = nsLine.substring(with: match.range(at: 1))
             var marker = nsLine.substring(with: match.range(at: 2))
-            let content = nsLine.substring(with: match.range(at: 3))
-            if content.isEmpty {
+            let content = nsLine.substring(with: match.range(at: 4))
+            if content.trimmingCharacters(in: .whitespaces).isEmpty {
                 // Unlike the Qt handler, also replace a nonempty selection on list exit.
                 return replacing(NSRange(location: start,
-                                          length: NSMaxRange(selection) - start), with: "\n")
+                                          length: NSMaxRange(selection) - start),
+                                 with: quotePrefix.isEmpty ? "\n" : quotePrefix + "\n" + quotePrefix)
             }
             if marker.first?.isNumber == true,
                let number = Int(marker.dropLast()), number < Int.max {
                 marker = "\(number + 1)\(marker.suffix(1))"
             }
-            return replacing(selection, with: "\n" + indent + marker + " ")
+            let task = match.range(at: 3).location != NSNotFound ? "[ ] " : ""
+            return replacing(selection, with: "\n" + quotePrefix + indent + marker + " " + task)
         }
-        return replacing(selection, with: "\n\n")
+        return replacing(selection, with: "\n" + quotePrefix)
     }
 
     private static func escapeLinkText(_ text: String) -> String {

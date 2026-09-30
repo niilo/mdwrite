@@ -140,12 +140,13 @@ struct MDWriteApplication {
             }
         }
         let delegate = ApplicationDelegate()
-        app.delegate = delegate
         installMenus(delegate: delegate)
-        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") {
+        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") {
             app.setActivationPolicy(.prohibited)
             do {
-                if CommandLine.arguments.contains("--style-test") {
+                if CommandLine.arguments.contains("--markdown-test") {
+                    try NativeMarkdownChecks.run()
+                } else if CommandLine.arguments.contains("--style-test") {
                     try NativeSmoke.runFormatting()
                 } else {
                     try NativeSmoke.run()
@@ -156,6 +157,9 @@ struct MDWriteApplication {
                 exit(1)
             }
         }
+        // Test processes never run startup recovery for real user documents,
+        // even if a nested AppKit print loop finishes application launching.
+        app.delegate = delegate
         app.setActivationPolicy(.regular)
         app.run()
         withExtendedLifetime(delegate) {}

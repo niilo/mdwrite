@@ -14,7 +14,7 @@ MDWRITE_CONFIGURATION=release ./bin/build-macos
 
 The bundle is `build/mdwrite.app`. It contains Markdown/plain-text document declarations, sandbox entitlements, iA Writer Mono fonts, and license notices. Signing is local and ad-hoc, with provisional identifier `dev.mdwrite.prototype`; this is not a notarized distribution. Rebuilding stages a fresh bundle and preserves the previous bundle so an already running app is not overwritten.
 
-Native menus provide New/Open/Save/Save As, Print, undo/redo, find/replace, bold/italic/link, text size, and fullscreen. Markdown source remains editable, with dimmed markers, six heading sizes, and shaded fenced/inline code. Matching backtick or tilde fences keep their contents literal, including unfinished blocks. Save is explicit; drafts use a separate atomic recovery journal. After an abnormal exit, records reopen as untitled copies. Recovery is debounced by 500 ms, so the most recent edits can be absent from a crash snapshot. External changes are polled each second and rechecked against the baseline during coordinated Save. Noncooperating writers can still race a save.
+Native menus provide New/Open/Save/Save As, Print, undo/redo, find/replace, bold/italic/link, text size, and fullscreen. Markdown source remains editable, with heading hierarchy, quotes/lists/tasks, rules, tables, emphasis/links, and literal shaded code. See the [element coverage audit](../docs/macos-markdown-coverage.md) for source presentations and limits. Enter inserts one newline, preserving list/quote continuation; Shift-Enter skips continuation. Save is explicit; drafts use a separate atomic recovery journal. After an abnormal exit, records reopen as untitled copies. Recovery is debounced by 500 ms, so the most recent edits can be absent from a crash snapshot. External changes are polled each second and rechecked against the baseline during coordinated Save. Noncooperating writers can still race a save.
 
 ## Checks
 
@@ -26,7 +26,7 @@ Native menus provide New/Open/Save/Save As, Print, undo/redo, find/replace, bold
 
 The source checker requires Node.js. Core tests use Swift Testing with workspace-local caches; the script supplies the installed CLT macro-plugin path when needed. The full test script builds the bundle and runs a separate AppKit smoke process using temporary files. Run it from a normal macOS terminal in a logged-in graphical session. It never sends a physical printer job.
 
-Ten core test groups and 35 source-handler examples pass. The native smoke passes opening, byte preservation, formatting, dirty state, undo/redo, Save with exact permissions, failed Save As, recovery/cleanup, distant-range styling, rendered PDF, and conflict protection. Native heading/code regression checks cover hierarchy, literal code, font scaling, fence removal, source preservation, and undo. Formatting uses AppKit display attributes and a paragraph-width background drawn by the layout manager. Full-document fence-context recomputation is currently used when fences are present; large-file performance remains a gate.
+Fourteen core test groups and 35 source-handler examples pass. The native smoke passes opening, byte preservation, formatting, dirty state, undo/redo, Save with exact permissions, failed Save As, recovery/cleanup, distant-range styling, rendered PDF, and conflict protection. Native heading/code regression checks cover hierarchy, literal code, font scaling, fence removal, source preservation, and undo. Native Markdown coverage also checks blockquotes, nested lists/tasks, Setext headings, tables, references, combined emphasis, strikethrough, indented code, escaped text, raw HTML, native Enter/Shift-Enter/Backspace, CRLF serialization, and rendered printing. Formatting uses Foundation semantic source spans and AppKit display attributes. Full-document styling maintains distant block/reference context; large-file performance remains a gate.
 
 For a focused formatting check after building:
 
@@ -34,7 +34,7 @@ For a focused formatting check after building:
 ./build/mdwrite.app/Contents/MacOS/mdwrite --style-test
 ```
 
-Add `--style-preview` to export temporary light/dark PDF previews from the real editor. The check uses its own document and does not edit open user documents.
+Use `--markdown-test` for the complete element/key audit and add `--style-preview` to export temporary light/dark PNGs from the real editor. The smaller `--style-test` also exports PDF previews. The check uses its own document and does not edit open user documents.
 
 ## Organization and remaining gates
 

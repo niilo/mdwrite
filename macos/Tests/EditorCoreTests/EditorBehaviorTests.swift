@@ -11,6 +11,8 @@ private struct BehaviorFixtures: Decodable {
         let argument: String?
         let expectedText: String
         let expectedSelection: [Int]
+        let nativeExpectedText: String?
+        let nativeExpectedSelection: [Int]?
         let noEdit: Bool?
     }
     struct Count: Decodable { let text: String; let count: Int }
@@ -59,8 +61,8 @@ private func range(_ numbers: [Int]) -> NSRange {
             #expect(edit == nil, "\(fixture.id)")
         } else {
             let edit = try #require(edit, "\(fixture.id)")
-            #expect(try Data(edit.applying(to: fixture.source).utf8) == Data(fixture.expectedText.utf8), "\(fixture.id)")
-            #expect(edit.selection == range(fixture.expectedSelection), "\(fixture.id)")
+            #expect(try Data(edit.applying(to: fixture.source).utf8) == Data((fixture.nativeExpectedText ?? fixture.expectedText).utf8), "\(fixture.id)")
+            #expect(edit.selection == range(fixture.nativeExpectedSelection ?? fixture.expectedSelection), "\(fixture.id)")
         }
     }
 }

@@ -80,6 +80,7 @@ enum NativeSmoke {
 
     static func run() throws {
         try runFormatting()
+        try NativeMarkdownChecks.run()
         func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
             if !condition() {
                 throw NSError(domain: "mdwrite.smoke", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
