@@ -1,0 +1,812 @@
+{
+  "schemaVersion": 1,
+  "rangeUnits": "UTF-16 location and length",
+  "provenance": "Source-derived from EditorMutations.js, Main.qml, backend.cpp, markdownhighlighter.cpp and existing Qt tests. Qt runtime validation pending. Native safety deviations are specified in docs/macos-behavior-contract.md.",
+  "edits": [
+    {
+      "id": "insert-normalized-newlines",
+      "command": "replace",
+      "source": "alpha omega",
+      "selection": [
+        5,
+        0
+      ],
+      "expectedText": "alphaone\ntwo omega",
+      "expectedSelection": [
+        12,
+        0
+      ],
+      "argument": "one\r\ntwo"
+    },
+    {
+      "id": "replace-selection",
+      "command": "replace",
+      "source": "alpha beta omega",
+      "selection": [
+        6,
+        4
+      ],
+      "expectedText": "alpha replacement omega",
+      "expectedSelection": [
+        17,
+        0
+      ],
+      "argument": "replacement"
+    },
+    {
+      "id": "bold-selection",
+      "command": "bold",
+      "source": "alpha beta omega",
+      "selection": [
+        6,
+        4
+      ],
+      "expectedText": "alpha **beta** omega",
+      "expectedSelection": [
+        8,
+        4
+      ]
+    },
+    {
+      "id": "italic-selection",
+      "command": "italic",
+      "source": "alpha beta",
+      "selection": [
+        6,
+        4
+      ],
+      "expectedText": "alpha *beta*",
+      "expectedSelection": [
+        7,
+        4
+      ]
+    },
+    {
+      "id": "bold-empty",
+      "command": "bold",
+      "source": "",
+      "selection": [
+        0,
+        0
+      ],
+      "expectedText": "****",
+      "expectedSelection": [
+        2,
+        0
+      ]
+    },
+    {
+      "id": "bold-emoji",
+      "command": "bold",
+      "source": "👩‍💻 hi",
+      "selection": [
+        0,
+        5
+      ],
+      "expectedText": "**👩‍💻** hi",
+      "expectedSelection": [
+        2,
+        5
+      ]
+    },
+    {
+      "id": "italic-combining",
+      "command": "italic",
+      "source": "é!",
+      "selection": [
+        0,
+        2
+      ],
+      "expectedText": "*é*!",
+      "expectedSelection": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "link-empty",
+      "command": "link",
+      "source": "",
+      "selection": [
+        0,
+        0
+      ],
+      "expectedText": "[link text](https://)",
+      "expectedSelection": [
+        1,
+        9
+      ]
+    },
+    {
+      "id": "link-label-no-url",
+      "command": "link",
+      "source": "site",
+      "selection": [
+        0,
+        4
+      ],
+      "expectedText": "[site](https://)",
+      "expectedSelection": [
+        7,
+        8
+      ]
+    },
+    {
+      "id": "link-label-url",
+      "command": "link",
+      "source": "site",
+      "selection": [
+        0,
+        4
+      ],
+      "expectedText": "[site](https://example.com)",
+      "expectedSelection": [
+        27,
+        0
+      ],
+      "argument": "https://example.com"
+    },
+    {
+      "id": "link-empty-with-url",
+      "command": "link",
+      "source": "",
+      "selection": [
+        0,
+        0
+      ],
+      "expectedText": "[link text](https://example.com)",
+      "expectedSelection": [
+        1,
+        9
+      ],
+      "argument": "https://example.com"
+    },
+    {
+      "id": "link-escape-label",
+      "command": "link",
+      "source": "a[b]",
+      "selection": [
+        0,
+        4
+      ],
+      "expectedText": "[a\\[b\\]](https://)",
+      "expectedSelection": [
+        9,
+        8
+      ]
+    },
+    {
+      "id": "paste-url-over-label",
+      "command": "paste",
+      "source": "  site  ",
+      "selection": [
+        0,
+        8
+      ],
+      "expectedText": "  [site](https://example.com)  ",
+      "expectedSelection": [
+        31,
+        0
+      ],
+      "argument": "https://example.com"
+    },
+    {
+      "id": "paste-plain-text",
+      "command": "paste",
+      "source": "old",
+      "selection": [
+        0,
+        3
+      ],
+      "expectedText": "a\nb\nc",
+      "expectedSelection": [
+        5,
+        0
+      ],
+      "argument": "a\r\nb\rc"
+    },
+    {
+      "id": "paste-url-empty-selection",
+      "command": "paste",
+      "source": "",
+      "selection": [
+        0,
+        0
+      ],
+      "expectedText": "https://example.com",
+      "expectedSelection": [
+        19,
+        0
+      ],
+      "argument": "https://example.com"
+    },
+    {
+      "id": "paste-url-whitespace-selection",
+      "command": "paste",
+      "source": "  ",
+      "selection": [
+        0,
+        2
+      ],
+      "expectedText": "https://example.com",
+      "expectedSelection": [
+        19,
+        0
+      ],
+      "argument": "https://example.com"
+    },
+    {
+      "id": "paste-empty",
+      "command": "paste",
+      "source": "text",
+      "selection": [
+        2,
+        0
+      ],
+      "expectedText": "text",
+      "expectedSelection": [
+        2,
+        0
+      ],
+      "argument": "",
+      "noEdit": true
+    },
+    {
+      "id": "return-paragraph",
+      "command": "return",
+      "source": "hello",
+      "selection": [
+        5,
+        0
+      ],
+      "expectedText": "hello\n\n",
+      "expectedSelection": [
+        7,
+        0
+      ]
+    },
+    {
+      "id": "return-soft",
+      "command": "softReturn",
+      "source": "hello",
+      "selection": [
+        5,
+        0
+      ],
+      "expectedText": "hello\n",
+      "expectedSelection": [
+        6,
+        0
+      ]
+    },
+    {
+      "id": "return-list",
+      "command": "return",
+      "source": "- item",
+      "selection": [
+        6,
+        0
+      ],
+      "expectedText": "- item\n- ",
+      "expectedSelection": [
+        9,
+        0
+      ]
+    },
+    {
+      "id": "return-indented-list",
+      "command": "return",
+      "source": "  + item",
+      "selection": [
+        8,
+        0
+      ],
+      "expectedText": "  + item\n  + ",
+      "expectedSelection": [
+        13,
+        0
+      ]
+    },
+    {
+      "id": "return-numbered-list",
+      "command": "return",
+      "source": "9. item",
+      "selection": [
+        7,
+        0
+      ],
+      "expectedText": "9. item\n10. ",
+      "expectedSelection": [
+        12,
+        0
+      ]
+    },
+    {
+      "id": "return-numbered-paren",
+      "command": "return",
+      "source": "9) item",
+      "selection": [
+        7,
+        0
+      ],
+      "expectedText": "9) item\n10) ",
+      "expectedSelection": [
+        12,
+        0
+      ]
+    },
+    {
+      "id": "return-quote",
+      "command": "return",
+      "source": ">> text",
+      "selection": [
+        7,
+        0
+      ],
+      "expectedText": ">> text\n>> ",
+      "expectedSelection": [
+        11,
+        0
+      ]
+    },
+    {
+      "id": "return-empty-list",
+      "command": "return",
+      "source": "- ",
+      "selection": [
+        2,
+        0
+      ],
+      "expectedText": "\n",
+      "expectedSelection": [
+        1,
+        0
+      ]
+    },
+    {
+      "id": "return-empty-quote",
+      "command": "return",
+      "source": "> ",
+      "selection": [
+        2,
+        0
+      ],
+      "expectedText": "\n",
+      "expectedSelection": [
+        1,
+        0
+      ]
+    },
+    {
+      "id": "return-fence",
+      "command": "return",
+      "source": "```\ncode",
+      "selection": [
+        8,
+        0
+      ],
+      "expectedText": "```\ncode\n",
+      "expectedSelection": [
+        9,
+        0
+      ]
+    },
+    {
+      "id": "return-after-closed-fence",
+      "command": "return",
+      "source": "```\ncode\n```",
+      "selection": [
+        12,
+        0
+      ],
+      "expectedText": "```\ncode\n```\n\n",
+      "expectedSelection": [
+        14,
+        0
+      ]
+    },
+    {
+      "id": "return-replaces-selection",
+      "command": "return",
+      "source": "hello world",
+      "selection": [
+        5,
+        6
+      ],
+      "expectedText": "hello\n\n",
+      "expectedSelection": [
+        7,
+        0
+      ]
+    },
+    {
+      "id": "return-empty-list-with-selection",
+      "command": "return",
+      "source": "- content",
+      "selection": [
+        2,
+        7
+      ],
+      "expectedText": "\n",
+      "expectedSelection": [
+        1,
+        0
+      ],
+      "nativeDifference": "List exit consumes the active selection rather than leaving selected text behind."
+    },
+    {
+      "id": "delete-paragraph-break",
+      "command": "deleteParagraphBreak",
+      "source": "one\n\ntwo",
+      "selection": [
+        5,
+        0
+      ],
+      "expectedText": "onetwo",
+      "expectedSelection": [
+        3,
+        0
+      ]
+    },
+    {
+      "id": "delete-single-break",
+      "command": "deleteParagraphBreak",
+      "source": "one\ntwo",
+      "selection": [
+        4,
+        0
+      ],
+      "expectedText": "one\ntwo",
+      "expectedSelection": [
+        4,
+        0
+      ],
+      "noEdit": true
+    },
+    {
+      "id": "delete-selection",
+      "command": "deleteParagraphBreak",
+      "source": "one\n\ntwo",
+      "selection": [
+        3,
+        2
+      ],
+      "expectedText": "one\n\ntwo",
+      "expectedSelection": [
+        3,
+        2
+      ],
+      "noEdit": true
+    },
+    {
+      "id": "return-unicode-number-is-paragraph",
+      "command": "return",
+      "source": "١. item",
+      "selection": [
+        7,
+        0
+      ],
+      "expectedText": "١. item\n\n",
+      "expectedSelection": [
+        9,
+        0
+      ]
+    },
+    {
+      "id": "return-entire-list-forward",
+      "command": "return",
+      "source": "- item",
+      "selection": [
+        0,
+        6
+      ],
+      "caret": 6,
+      "expectedText": "\n\n",
+      "expectedSelection": [
+        2,
+        0
+      ],
+      "nativeDifference": "Native Return uses the replacement start, not the active selection end."
+    },
+    {
+      "id": "return-entire-list-backward",
+      "command": "return",
+      "source": "- item",
+      "selection": [
+        0,
+        6
+      ],
+      "caret": 0,
+      "expectedText": "\n\n",
+      "expectedSelection": [
+        2,
+        0
+      ]
+    },
+    {
+      "id": "paste-url-parentheses",
+      "command": "paste",
+      "source": "label",
+      "selection": [
+        0,
+        5
+      ],
+      "argument": "https://example.com/a(b)",
+      "expectedText": "[label](https://example.com/a\\(b\\))",
+      "expectedSelection": [
+        35,
+        0
+      ]
+    }
+  ],
+  "wordCounts": [
+    {
+      "text": "",
+      "count": 0
+    },
+    {
+      "text": "one two-three don't 42",
+      "count": 4
+    },
+    {
+      "text": "你好 世界",
+      "count": 2
+    },
+    {
+      "text": "foo_bar",
+      "count": 2
+    },
+    {
+      "text": "é",
+      "count": 1
+    },
+    {
+      "text": "👩‍💻",
+      "count": 0
+    },
+    {
+      "text": "123 ４２",
+      "count": 2
+    },
+    {
+      "text": "\n\t",
+      "count": 0
+    },
+    {
+      "text": "one--two",
+      "count": 2
+    }
+  ],
+  "filenames": [
+    {
+      "text": "My first draft\nBody",
+      "filename": "My first draft.md"
+    },
+    {
+      "text": "A/B",
+      "filename": "A-B.md"
+    },
+    {
+      "text": "",
+      "filename": "Untitled.md"
+    },
+    {
+      "text": "Already.md",
+      "filename": "Already.md"
+    },
+    {
+      "text": "Already.MD",
+      "filename": "Already.MD"
+    },
+    {
+      "text": ".",
+      "filename": "Untitled.md"
+    },
+    {
+      "text": "..",
+      "filename": "Untitled.md"
+    },
+    {
+      "text": "\nBody",
+      "filename": "Untitled.md"
+    },
+    {
+      "text": "A\u0000B",
+      "filename": "A-B.md"
+    },
+    {
+      "text": "  title  ",
+      "filename": "title.md"
+    }
+  ],
+  "links": [
+    {
+      "text": "www.example.com/path",
+      "normalized": "https://www.example.com/path",
+      "opens": true
+    },
+    {
+      "text": "mailto:writer@example.com",
+      "normalized": "mailto:writer@example.com",
+      "opens": true
+    },
+    {
+      "text": "https://example.com",
+      "normalized": "https://example.com",
+      "opens": true
+    },
+    {
+      "text": "ftp://example.com/file",
+      "normalized": "ftp://example.com/file",
+      "opens": false
+    },
+    {
+      "text": "example.com",
+      "normalized": null,
+      "opens": false
+    },
+    {
+      "text": "file:///tmp/private",
+      "normalized": null,
+      "opens": false
+    },
+    {
+      "text": "javascript:alert(1)",
+      "normalized": null,
+      "opens": false
+    },
+    {
+      "text": "https:///path",
+      "normalized": null,
+      "opens": false
+    },
+    {
+      "text": "  https://example.com\nignored  ",
+      "normalized": "https://example.com",
+      "opens": true
+    },
+    {
+      "text": "",
+      "normalized": null,
+      "opens": false
+    },
+    {
+      "text": "https://example.com/café",
+      "normalized": "https://example.com/caf%C3%A9",
+      "opens": true
+    },
+    {
+      "text": "https://example.com/a b",
+      "normalized": "https://example.com/a%20b",
+      "opens": true
+    }
+  ],
+  "markup": [
+    {
+      "source": "**bold** and *italic* and [site](https://example.com)",
+      "spans": [
+        {
+          "kind": "bold",
+          "content": [
+            2,
+            4
+          ],
+          "markers": [
+            [
+              0,
+              2
+            ],
+            [
+              6,
+              2
+            ]
+          ]
+        },
+        {
+          "kind": "italic",
+          "content": [
+            14,
+            6
+          ],
+          "markers": [
+            [
+              13,
+              1
+            ],
+            [
+              20,
+              1
+            ]
+          ]
+        },
+        {
+          "kind": "link",
+          "content": [
+            27,
+            4
+          ],
+          "markers": [
+            [
+              26,
+              1
+            ],
+            [
+              31,
+              22
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "👩‍💻 **é**",
+      "spans": [
+        {
+          "kind": "bold",
+          "content": [
+            8,
+            2
+          ],
+          "markers": [
+            [
+              6,
+              2
+            ],
+            [
+              10,
+              2
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "plain\n_text_",
+      "spans": [
+        {
+          "kind": "italic",
+          "content": [
+            7,
+            4
+          ],
+          "markers": [
+            [
+              6,
+              1
+            ],
+            [
+              11,
+              1
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "__bold__",
+      "spans": [
+        {
+          "kind": "bold",
+          "content": [
+            2,
+            4
+          ],
+          "markers": [
+            [
+              0,
+              2
+            ],
+            [
+              6,
+              2
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "plain text",
+      "spans": []
+    }
+  ]
+}

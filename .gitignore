@@ -11,3 +11,5 @@ moc_*.cpp
 qrc_*.cpp
 .qmake.stash
 Makefile
+/macos/.build/
+/macos/.swiftpm/

@@ -1,0 +1,99 @@
+#!/usr/bin/env node
+// Source-level parity check. TextEdit's signals, layout, and undo still need Qt tests.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const root = path.resolve(__dirname, '..');
+const fixtures = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/editor-behavior.json'), 'utf8'));
+const mutations = fs.readFileSync(path.join(root, 'src/EditorMutations.js'), 'utf8').replace(/^\.pragma library\s*/, '');
+const qml = fs.readFileSync(path.join(root, 'src/Main.qml'), 'utf8');
+const context = vm.createContext({});
+vm.runInContext(mutations + '\nvar EditorMutations = { replaceRange: replaceRange };', context);
+for (const name of ['replaceSelectionWith', 'wrapSelection', 'insertLink', 'smartReturn',
+                    'escapeMarkdownLinkText', 'escapeMarkdownLinkDestination',
+                    'pasteClipboardUrlAsMarkdownLink', 'pasteClipboardAsPlainText',
+                    'deleteParagraphBreakBehindCursor']) {
+    const start = qml.indexOf('                function ' + name + '(');
+    assert.notEqual(start, -1, `Missing QML function ${name}`);
+    const end = qml.indexOf('\n                }', start + 1);
+    assert.notEqual(end, -1, `Cannot isolate QML function ${name}`);
+    vm.runInContext(qml.slice(start, end + '\n                }'.length), context);
+}
+let count = 0;
+for (const fixture of fixtures.edits) {
+    // Native differences are named in the contract rather than asserted as Qt parity.
+    if (fixture.nativeDifference) continue;
+    const editor = {
+        text: fixture.source,
+        cursorPosition: fixture.caret ?? fixture.selection[0] + fixture.selection[1],
+        selectionStart: fixture.selection[0],
+        selectionEnd: fixture.selection[0] + fixture.selection[1],
+        forceActiveFocus() {},
+        remove(start, end) {
+            this.text = this.text.slice(0, start) + this.text.slice(end);
+            this.cursorPosition = start;
+            this.selectionStart = start;
+            this.selectionEnd = start;
+        },
+        insert(start, text) {
+            this.text = this.text.slice(0, start) + text + this.text.slice(start);
+            this.cursorPosition = start + text.length;
+            this.selectionStart = this.cursorPosition;
+            this.selectionEnd = this.cursorPosition;
+        },
+        select(start, end) {
+            this.cursorPosition = end;
+            this.selectionStart = start;
+            this.selectionEnd = end;
+        }
+    };
+    let cursor = editor.cursorPosition;
+    Object.defineProperty(editor, 'cursorPosition', {
+        get: () => cursor,
+        set: value => {
+            cursor = value;
+            editor.selectionStart = value;
+            editor.selectionEnd = value;
+        }
+    });
+    context.editor = editor;
+    context.forceActiveFocus = () => {};
+    // The C++ clipboard boundary is supplied, not emulated by this JS check.
+    context.backend = {
+        clipboardText: () => fixture.argument ?? '',
+        clipboardUrl: () => (fixture.argument ?? '').startsWith('https://') ? fixture.argument : ''
+    };
+    for (const name of ['replaceSelectionWith', 'escapeMarkdownLinkText', 'escapeMarkdownLinkDestination']) {
+        editor[name] = (...args) => context[name](...args);
+    }
+    Object.defineProperties(context, {
+        text: { configurable: true, get: () => editor.text },
+        cursorPosition: { configurable: true, get: () => editor.cursorPosition, set: value => {
+            editor.cursorPosition = value;
+            editor.selectionStart = value;
+            editor.selectionEnd = value;
+        } },
+        selectionStart: { configurable: true, get: () => editor.selectionStart },
+        selectionEnd: { configurable: true, get: () => editor.selectionEnd }
+    });
+    context.remove = (start, end) => editor.remove(start, end);
+    switch (fixture.command) {
+    case 'replace': context.replaceSelectionWith(fixture.argument); break;
+    case 'bold': context.wrapSelection('**', '**'); break;
+    case 'italic': context.wrapSelection('*', '*'); break;
+    case 'link': context.insertLink(); break;
+    case 'paste':
+        if (!context.pasteClipboardUrlAsMarkdownLink()) context.pasteClipboardAsPlainText();
+        break;
+    case 'return': context.smartReturn(false); break;
+    case 'softReturn': context.smartReturn(true); break;
+    case 'deleteParagraphBreak': context.deleteParagraphBreakBehindCursor(); break;
+    default: throw new Error(`Unknown command ${fixture.command}`);
+    }
+    assert.equal(editor.text, fixture.expectedText, `${fixture.id}: source`);
+    assert.deepEqual([editor.selectionStart, editor.selectionEnd - editor.selectionStart],
+                     fixture.expectedSelection, `${fixture.id}: selection`);
+    count++;
+}
+console.log(`PASS: ${count} editing fixtures against existing QML/JS source (TextEdit adapter simulated; Qt runtime acceptance pending)`);

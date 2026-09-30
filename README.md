@@ -47,7 +47,9 @@ IBM Plex, copyright IBM Corp.
 
 The planned native Swift/AppKit app is named `mdwrite`. See the
 [migration plan](docs/macos-port-plan.md) and
-[agent task list](docs/macos-port-tasks.md). The current app still uses Qt.
+[agent task list](docs/macos-port-tasks.md). The current app still uses Qt. Native implementation has started with a tested
+Swift editor module; see [native development](macos/README.md) and the
+[behavior contract](docs/macos-behavior-contract.md).
 
 The Qt app retains its internal `omawrite` application name solely for settings
 and crash-recovery compatibility; its display name and executable are `mdwrite`.

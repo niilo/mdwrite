@@ -2,7 +2,7 @@
 
 ## Execution contract
 
-Use [the migration plan](macos-port-plan.md) as the product contract and [the platform research](macos-research.md) for API evidence. These tasks authorize implementation work only when the user starts that workflow; writing this ledger does not launch the port.
+Use [the migration plan](macos-port-plan.md) as the product contract and [the platform research](macos-research.md) for API evidence. These tasks authorize implementation work only when the user starts that workflow; implementation was authorized by the user after the initial planning commit. The first implementation work and its evidence are recorded in [the behavior contract](macos-behavior-contract.md).
 
 A coordinator selects the next ready task, gives one agent ownership of its files, and records status, branch or commit, checks, and findings here. Use isolated branches/worktrees when available. Keep dependency/toolchain setup under coordinator ownership; never have two agents edit an Xcode project, scripts, or the same integration file concurrently. Parallelize only the independent work identified below, after the shared interfaces and fixtures are merged.
 
@@ -23,6 +23,8 @@ For each task, the implementer reads the named source and dependent artifacts, w
 
 ### M01 Freeze behavior fixtures and product choices
 
+- **In progress:** source-derived contract and 73 fixtures captured; 35 QML/JS handler examples and seven Swift test groups pass. Qt runtime acceptance remains pending. See [macos-behavior-contract.md](macos-behavior-contract.md).
+- **Dependency refinement:** the source contract, portable module preparation, and source-only checks may proceed while M00 runtime evidence is unavailable. This does not accept M00/M01 or unblock production application work. Keep the missing Qt/portal validation explicit.
 - [ ] **Dependencies:** M00 runtime acceptance for a runnable Qt baseline. **Owner/files:** contract agent; `tests/fixtures/`, parity contract documentation, this ledger.
 - Read `src/Main.qml`, `src/EditorMutations.js`, `src/backend.cpp`, `src/markdownhighlighter.cpp`, and `tests/tst_mdwrite.cpp`. Record all migration-plan parity rows as test cases or manual scripts, including current quirks and intentional native differences.
 - Choose macOS minimum, architectures, development bundle identifier, explicit-save policy, encoding/BOM/newline policy, and error/conflict vocabulary. Add examples for source spans, Unicode, smart Return, pasted links, source copy, and rendered printing.
@@ -52,6 +54,7 @@ For each task, the implementer reads the named source and dependent artifacts, w
 
 ### M05 Implement pure editing and Markdown behavior
 
+- **Preparation only:** Foundation module and fixture checks exist under `macos/EditorCore/`; this code supports the source contract and upcoming spikes. AppKit integration and complete M05 acceptance remain pending the recorded dependencies.
 - [ ] **Dependencies:** M04 and M01 fixtures. **Owner/files:** core agent; `macos/EditorCore/`, core test files.
 - Implement checked UTF-16 span analysis, mutation commands, word count, suggested names, newline rules, and URL policy. Preserve current Markdown subset; use existing C++/JS as a reference, not a native runtime dependency.
 - **Acceptance:** fixtures pass for formatting/link commands, trimmed whitespace, escapes, list/quote continuation and exit, numbered list increment, fenced-code Return, soft Return, paired-break deletion, accepted clipboard schemes, and invalid/out-of-range selections. Tests check outcomes rather than copying implementation logic.
@@ -123,3 +126,9 @@ Checked on 2026-09-30:
 - No native build was attempted: the native implementation is planned, and full Xcode remains a toolchain prerequisite.
 
 M00 is implemented but remains pending runtime acceptance. The next implementation action is to provision Qt 6 for baseline validation and then execute M01; full Xcode is needed before the native spikes/project tests.
+
+## Implementation checkpoint
+
+Initial rename and plan commit: `cad6942`. The user then authorized implementation. Native work currently adds a Swift package, 73 behavior fixtures, source and native test scripts, and a concrete parity/manual acceptance contract. `./bin/test-source-fixtures` passed 35 actual QML/JS handler examples with a simulated TextEdit; two recorded native Return differences are excluded from the source oracle. `./bin/test-macos-core` passed seven Swift Testing test groups after resolving CLT macro-plugin discovery. Full Qt, TextKit UI, document/recovery, and sandbox acceptance remain pending. No native app, signed bundle, or Xcode project is claimed yet.
+
+Final source-grounded review found no unresolved correctness blockers for the initial Foundation-only slice after correcting canonical-equivalence saves, ASCII numbered-list matching, directional Return policy, and URL serialization fixtures. This review does not accept M02/M03 or native UI behavior.

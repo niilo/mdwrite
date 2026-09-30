@@ -4,7 +4,7 @@
 
 Build **mdwrite**, a native macOS Markdown writing app that preserves the focused, single-editor experience of the current Qt application. Deliver a native Swift/AppKit application rather than a macOS skin around Qt. Use SwiftUI only for isolated settings or informational views where it simplifies implementation.
 
-This is an implementation plan, not a claim that the port exists. The task ledger is [macos-port-tasks.md](macos-port-tasks.md). Platform evidence is collected in [macos-research.md](macos-research.md). Proposed choices below remain subject to the two feasibility gates; product changes require an explicit entry in the parity matrix.
+Implementation started after the initial rename and plan commit `cad6942`. The [behavior contract](macos-behavior-contract.md), source fixtures, and Foundation-only Swift module are now in progress; a native application does not exist yet. The task ledger is [macos-port-tasks.md](macos-port-tasks.md). Platform evidence is collected in [macos-research.md](macos-research.md). Proposed choices below remain subject to the two feasibility gates; product changes require an explicit entry in the parity matrix.
 
 ## Proposed defaults
 
@@ -91,4 +91,4 @@ Initial review found that hidden markers, UTF-16 indexing, autosave-in-place, ex
 
 Still to resolve in M01–M03: deployment floor and architectures, publisher bundle namespace, exact newline/encoding contract, which text engine passes elision, and whether NSDocument autosave elsewhere alone satisfies the explicit-save recovery policy. These are bounded implementation decisions with named owners, not reasons to start a broad rewrite before the spikes pass.
 
-Local environment inspected on 2026-09-30: Swift 6.4 and Command Line Tools are installed; full Xcode is not selected, and neither `qmake6` nor `qmake` is on PATH. Project-level XCTest/UI and Qt validation therefore require provisioning the relevant toolchains. A plan or static rename check is not evidence that either application builds.
+Local environment inspected on 2026-09-30: Swift 6.4 and Command Line Tools are installed; full Xcode is not selected, and neither `qmake6` nor `qmake` is on PATH. Project-level XCTest/UI and Qt validation therefore require provisioning the relevant toolchains. Source-only fixture checks and Swift Testing package checks can run with the installed tools; see the behavior contract for their results. A plan or static rename check is not evidence that either application builds.
