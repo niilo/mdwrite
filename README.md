@@ -1,4 +1,4 @@
-# Omawrite
+# mdwrite
 
 A dead-simple Markdown writing app built with Qt Quick and C++ that automatically follows system dark/light mode.
 
@@ -8,7 +8,10 @@ A dead-simple Markdown writing app built with Qt Quick and C++ that automaticall
 
 ## Install
 
-Install via the Omarchy Package Repository via the `omawrite` package. It's installed by default in new installations of Omarchy (from Quattro forward).
+Build locally with `./bin/build` and launch `./build/mdwrite`. On Arch Linux,
+`./bin/install` builds and installs the renamed `mdwrite` package. The upstream
+Omarchy release is still distributed as `omawrite`; this repository rename does
+not publish or rename that external package.
 
 ## Shortcuts
 
@@ -16,7 +19,7 @@ Install via the Omarchy Package Repository via the `omawrite` package. It's inst
 - `Ctrl+Shift+S` saves as.
 - `Ctrl+O` opens a Markdown file through the portal picker.
 - `Ctrl+P` opens the system print dialog.
-- `Ctrl+N` opens a new Omawrite window.
+- `Ctrl+N` opens a new mdwrite window.
 - `Ctrl+Z`, `Ctrl+Shift+Z`, and `Ctrl+Y` handle undo and redo.
 - `Super+F` toggles fullscreen. Qt maps this key as `Meta+F`.
 - `Ctrl+F` searches the document. Use `Enter` or `Ctrl+G` for the next match and `Shift+Enter` for the previous match.
@@ -24,12 +27,12 @@ Install via the Omarchy Package Repository via the `omawrite` package. It's inst
 - `Ctrl+B`, `Ctrl+I`, and `Ctrl+K` insert bold, italic, and link Markdown.
 - `Ctrl+?` shows the keyboard shortcut reference.
 
-Unsaved drafts are recovered after an abnormal exit. Omawrite also watches open files
+Unsaved drafts are recovered after an abnormal exit. mdwrite also watches open files
 and warns before an external change can replace local work.
 
 Text follows the desktop text size — `omarchy display text size`, or GNOME's
 `text-scaling-factor` — and re-flows without a restart. The default of 12px leaves
-Omawrite at the size it is designed around; larger and smaller sizes scale from there.
+mdwrite at the size it is designed around; larger and smaller sizes scale from there.
 
 ## Requirements
 
@@ -39,3 +42,12 @@ Omawrite at the size it is designed around; larger and smaller sizes scale from 
 The iA Writer Mono font is bundled under the SIL Open Font License 1.1; see
 `fonts/OFL.txt`. The font is copyright Information Architects Inc. and based on
 IBM Plex, copyright IBM Corp.
+
+## Native macOS migration
+
+The planned native Swift/AppKit app is named `mdwrite`. See the
+[migration plan](docs/macos-port-plan.md) and
+[agent task list](docs/macos-port-tasks.md). The current app still uses Qt.
+
+The Qt app retains its internal `omawrite` application name solely for settings
+and crash-recovery compatibility; its display name and executable are `mdwrite`.

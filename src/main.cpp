@@ -15,9 +15,11 @@
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+    // Keep the legacy settings and recovery namespace across the product rename.
     app.setApplicationName(QStringLiteral("omawrite"));
-    app.setDesktopFileName(QStringLiteral("omawrite"));
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("omawrite")));
+    app.setApplicationDisplayName(QStringLiteral("mdwrite"));
+    app.setDesktopFileName(QStringLiteral("mdwrite"));
+    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("mdwrite")));
 
     QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/iAWriterMonoS-Regular.ttf"));
     QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/iAWriterMonoS-Italic.ttf"));
@@ -64,7 +66,7 @@ int main(int argc, char *argv[]) {
 
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
-        qCritical() << "Could not load the Omawrite interface; resource available:"
+        qCritical() << "Could not load the mdwrite interface; resource available:"
                     << QFile::exists(QStringLiteral(":/Main.qml"));
         return -1;
     }
