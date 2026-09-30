@@ -4,7 +4,7 @@
 
 Build **mdwrite**, a native macOS Markdown writing app that preserves the focused, single-editor experience of the current Qt application. Deliver a native Swift/AppKit application rather than a macOS skin around Qt. Use SwiftUI only for isolated settings or informational views where it simplifies implementation.
 
-Implementation started after the initial rename and plan commit `cad6942`. The [behavior contract](macos-behavior-contract.md), source fixtures, and Foundation-only Swift module are now in progress; a native application does not exist yet. The task ledger is [macos-port-tasks.md](macos-port-tasks.md). Platform evidence is collected in [macos-research.md](macos-research.md). Proposed choices below remain subject to the two feasibility gates; product changes require an explicit entry in the parity matrix.
+Implementation started after the initial rename and plan commit `cad6942`. The [behavior contract](macos-behavior-contract.md), source fixtures, Swift editor module, and a launchable AppKit development application now exist. The task ledger is [macos-port-tasks.md](macos-port-tasks.md). Platform evidence is collected in [macos-research.md](macos-research.md). Proposed choices below remain subject to the two feasibility gates; product changes require an explicit entry in the parity matrix.
 
 ## Proposed defaults
 
@@ -51,7 +51,7 @@ flowchart TD
     Doc --> Print[Rendered print snapshot]
 ```
 
-`MarkdownDocument` owns persistence, document identity, dirty state, and its undo manager. NSDocument may load before any editor exists: retain an immutable loaded snapshot for initial attachment, headless serialization, and recovery. After attachment, the editor's text storage is the authoritative live text; document serialization reads a versioned snapshot rather than maintaining a second independently editable string. Background analysis consumes immutable snapshots and discards stale results; AppKit view and text mutations stay on the main actor.
+`MarkdownDocument` owns persistence, document identity, dirty state, and its undo manager. NSDocument may load before any editor exists: the current implementation owns text storage at document creation, before attaching an editor. The same storage remains authoritative after attachment; serialization captures its source rather than maintaining a second independently editable string. Background analysis consumes immutable snapshots and discards stale results; AppKit view and text mutations stay on the main actor.
 
 `EditorCore` contains Foundation-only Markdown span analysis, edit commands, word count, filename suggestions, and URL policy. Commands return replacement text and selection as checked UTF-16 ranges; they do not perform file I/O or create views. The AppKit adapter applies a command as a native text edit with one undo group and uses one dirty-state mechanism: document undo-manager tracking or explicit change-count updates, selected and tested in M03. Avoid double counting; undo to the saved baseline must clear dirty state. Highlighting attributes and theme changes are presentation, not source edits.
 
@@ -89,6 +89,14 @@ Release acceptance requires every parity row to be accepted or explicitly deferr
 
 Initial review found that hidden markers, UTF-16 indexing, autosave-in-place, external-save races, rendered printing, and identity migration were under-specified. This plan makes each a named gate or task with observable acceptance criteria. A source-grounded second review added mandatory observation for uncoordinated writes, pre-window document loading, single-owner dirty tracking, and revision-specific recovery cleanup. A future review must check actual prototype evidence before architecture is considered proven.
 
-Still to resolve in M01–M03: deployment floor and architectures, publisher bundle namespace, exact newline/encoding contract, which text engine passes elision, and whether NSDocument autosave elsewhere alone satisfies the explicit-save recovery policy. These are bounded implementation decisions with named owners, not reasons to start a broad rewrite before the spikes pass.
+Initial choices are macOS 14, Apple silicon validation, the documented byte-preserving UTF-8 policy, and one app-owned recovery journal with NSDocument autosaving disabled. Still to resolve before release: tested architecture/OS coverage, publisher bundle namespace, which text engine passes elision, and the complete persistence/recovery failure matrix. These are bounded implementation decisions with named owners, not reasons to start a broad rewrite before the spikes pass.
 
-Local environment inspected on 2026-09-30: Swift 6.4 and Command Line Tools are installed; full Xcode is not selected, and neither `qmake6` nor `qmake` is on PATH. Project-level XCTest/UI and Qt validation therefore require provisioning the relevant toolchains. Source-only fixture checks and Swift Testing package checks can run with the installed tools; see the behavior contract for their results. A plan or static rename check is not evidence that either application builds.
+Local environment inspected on 2026-09-30: Swift 6.4 and Command Line Tools are installed; full Xcode is not selected, and neither `qmake6` nor `qmake` is on PATH. Project-level XCTest/UI and Qt validation therefore require provisioning the relevant toolchains. Source fixtures, Swift Testing, and the native SwiftPM app build run with the installed tools; see the behavior contract for results. Qt runtime and full Xcode UI-test acceptance remain pending.
+
+## Launchable development milestone
+
+The user's later instruction to continue until a launchable macOS app authorizes an interim native vertical slice while the full M02/M03 acceptance matrix remains open. This refines execution order without declaring production parity. `./bin/build-macos` uses SwiftPM and CLT to assemble and locally sign an AppKit bundle; an Xcode project is no longer a prerequisite for the local milestone. Xcode UI tests remain a later hardening task.
+
+TextKit 1 currently displays dimmed source markers rather than hiding syntax. The app uses explicit synchronous document Save, a single recovery journal, path polling plus save-time baseline comparison, and a separate subset Markdown print renderer. These are reviewable development choices; hidden-syntax requirements and the remaining failure/accessibility/performance gates retain their original acceptance criteria.
+
+On 2026-09-30 the sandboxed native bundle built and launched on the Apple silicon development Mac. An earlier native smoke revision passed real document Save/undo/recovery/conflict checks and generated a rendered PDF. The expanded smoke and recent styling refinements await execution because automatic approval review reported exhausted workspace credits. This milestone is launchable development software, not release acceptance.

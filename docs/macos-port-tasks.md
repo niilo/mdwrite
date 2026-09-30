@@ -2,7 +2,7 @@
 
 ## Execution contract
 
-Use [the migration plan](macos-port-plan.md) as the product contract and [the platform research](macos-research.md) for API evidence. These tasks authorize implementation work only when the user starts that workflow; implementation was authorized by the user after the initial planning commit. The first implementation work and its evidence are recorded in [the behavior contract](macos-behavior-contract.md).
+Use [the migration plan](macos-port-plan.md) as the product contract and [the platform research](macos-research.md) for API evidence. These tasks authorize implementation work only when the user starts that workflow; implementation was authorized by the user after the initial planning commit. Implementation progress and its evidence are recorded in [the behavior contract](macos-behavior-contract.md).
 
 A coordinator selects the next ready task, gives one agent ownership of its files, and records status, branch or commit, checks, and findings here. Use isolated branches/worktrees when available. Keep dependency/toolchain setup under coordinator ownership; never have two agents edit an Xcode project, scripts, or the same integration file concurrently. Parallelize only the independent work identified below, after the shared interfaces and fixtures are merged.
 
@@ -24,7 +24,7 @@ For each task, the implementer reads the named source and dependent artifacts, w
 ### M01 Freeze behavior fixtures and product choices
 
 - **In progress:** source-derived contract and 73 fixtures captured; 35 QML/JS handler examples and seven Swift test groups pass. Qt runtime acceptance remains pending. See [macos-behavior-contract.md](macos-behavior-contract.md).
-- **Dependency refinement:** the source contract, portable module preparation, and source-only checks may proceed while M00 runtime evidence is unavailable. This does not accept M00/M01 or unblock production application work. Keep the missing Qt/portal validation explicit.
+- **Dependency refinement:** the source contract, portable module preparation, and source-only checks may proceed while M00 runtime evidence is unavailable. This does not accept M00/M01. The later launchable-app directive permits a development vertical slice while production gates remain open. Keep the missing Qt/portal validation explicit.
 - [ ] **Dependencies:** M00 runtime acceptance for a runnable Qt baseline. **Owner/files:** contract agent; `tests/fixtures/`, parity contract documentation, this ledger.
 - Read `src/Main.qml`, `src/EditorMutations.js`, `src/backend.cpp`, `src/markdownhighlighter.cpp`, and `tests/tst_mdwrite.cpp`. Record all migration-plan parity rows as test cases or manual scripts, including current quirks and intentional native differences.
 - Choose macOS minimum, architectures, development bundle identifier, explicit-save policy, encoding/BOM/newline policy, and error/conflict vocabulary. Add examples for source spans, Unicode, smart Return, pasted links, source copy, and rendered printing.
@@ -32,12 +32,16 @@ For each task, the implementer reads the named source and dependent artifacts, w
 
 ### M02 Prove the native text engine
 
+- **Development evidence:** TextKit 1 source mode is integrated with dimmed markers, native undo, and main-actor presentation styling. Full syntax elision, engine comparison, IME/VoiceOver, and large-file measurements are pending. This is the recorded interim fallback, not acceptance of the elision gate.
+
 - [ ] **Dependencies:** M01. **Owner/files:** editor spike agent; `macos/Spikes/Editor/`, text-engine decision and measurements.
 - Compare TextKit 2 with explicitly constructed TextKit 1 as necessary. Keep source text unchanged while styling and hiding inline markers. Measure source/display range mapping, layout, hit testing, and large-file editing. Evaluate rendered Markdown APIs for printing separately.
 - **Acceptance gate:** demonstrate arrows and modified navigation, selection through hidden spans, mouse selection, backspace/delete, word movement, wrapping, URL paste, one-step undo/redo, source-copy behavior, marked-text IME composition, emoji/combining characters, and VoiceOver. Styling alone changes neither undo nor dirty state. Record engine selection and 1 MiB/10 MiB latency/memory results on named hardware.
-- **Failure path:** expose dimmed source in the spike, identify failed behavior, and revise the engine/design. Do not silently replace final hidden-syntax requirements or start the full editor before acceptance.
+- **Failure path:** expose dimmed source in the spike, identify failed behavior, and revise the engine/design. Keep final hidden-syntax requirements explicit. The later launchable development milestone may proceed in source mode; production acceptance still requires this gate.
 
 ### M03 Prove document persistence and recovery
+
+- **Development evidence:** a document-owned storage, native undo-driven dirty state, synchronous coordinated Save through `super.writeSafely`, one app-owned recovery journal, and external baseline checks are integrated. Earlier smoke passed Save/undo/recovery/conflict checks. Exact permission and failed-Save-As additions await native execution; the full failure matrix remains pending.
 
 - [ ] **Dependencies:** M01; can run alongside M02. **Owner/files:** document spike agent; `macos/Spikes/Documents/`, persistence decision and failure fixtures.
 - Prototype sandboxed NSDocument with explicit Save, autosave elsewhere, undo-driven change counts, and named/untitled recovery. Prove coordination with in-place autosave disabled. Add supplemental observation for uncoordinated external writes, including inode replacement; define baseline and conflict retention.
@@ -46,20 +50,25 @@ For each task, the implementer reads the named source and dependent artifacts, w
 
 ### M04 Create the native app and working document slice
 
+- **Launchable development milestone achieved:** SwiftPM builds an AppKit executable and `./bin/build-macos` creates a sandboxed, ad-hoc-signed `build/mdwrite.app`. The app launched on the development Mac; native menus/editor/footer and a saved document window were observed. The later user directive authorizes this interim slice before complete M02/M03 acceptance.
+- **Execution refinement:** CLT plus SwiftPM replaces the Xcode-project prerequisite for the local app. `NativeApp/`, `Info.plist`, entitlements, bundled fonts/licenses, `bin/build-macos`, `bin/run-macos`, and `bin/test-macos` are present. Full Xcode UI-test setup and complete lifecycle acceptance remain later gates.
+
 - [ ] **Dependencies:** accepted M02 and M03. **Owner/files:** integration agent; `macos/mdwrite.xcodeproj`, shared scheme, app entry, document/window scaffolding, scripts.
-- Commit a reproducible Xcode application project with application, unit-test, and UI-test targets; AppKit editor, sandbox entitlements, document types, fonts/license resources, and provisional app icon. Support Finder Open With and recent documents. Use owned bundle namespace before distribution.
-- Prerequisite: full Xcode with the selected macOS SDK, accepted license, and active developer directory; Command Line Tools alone are not the project/UI-test toolchain. Handle load before window creation with an immutable initial snapshot and headless read/write/recovery support.
-- Add `./bin/build-macos` and `./bin/test-macos`; use explicit project/scheme names in `xcodebuild`, deterministic output directories, and unsigned local build support. Keep Qt commands functional.
-- **Acceptance:** a clean checkout builds `mdwrite.app`; opening, typing, undoing, explicit saving, closing, and reopening a Markdown file works through menus and panels. No Qt framework is linked in the native bundle. Document windows isolate content and undo state. XCTest runs through the committed shared scheme.
+- Maintain the reproducible SwiftPM application build; add an Xcode UI-test project/pipeline for hardening. Include AppKit editor, sandbox entitlements, document types, fonts/license resources, and provisional app icon. Support Finder Open With and recent documents. Use owned bundle namespace before distribution.
+- UI-test prerequisite: full Xcode with the selected macOS SDK, accepted license, and active developer directory. Compatible Command Line Tools are sufficient for the development app and Swift Testing core. Handle load before window creation with an immutable initial snapshot and headless read/write/recovery support.
+- Keep `./bin/build-macos`, `./bin/run-macos`, and `./bin/test-macos` reproducible with deterministic output directories and local ad-hoc signing. Future `xcodebuild` checks must name their project and scheme explicitly. Keep Qt commands functional.
+- **Acceptance:** a clean checkout builds `mdwrite.app`; opening, typing, undoing, explicit saving, closing, and reopening a Markdown file works through menus and panels. No Qt framework is linked in the native bundle. Document windows isolate content and undo state. Swift Testing core checks pass; future Xcode UI tests run through a committed shared scheme.
 
 ### M05 Implement pure editing and Markdown behavior
 
-- **Preparation only:** Foundation module and fixture checks exist under `macos/EditorCore/`; this code supports the source contract and upcoming spikes. AppKit integration and complete M05 acceptance remain pending the recorded dependencies.
+- **Implemented development slice:** Foundation module and 73 fixtures exist under `macos/EditorCore/`; native source commands are integrated. Seven Swift test groups pass. Complete fixture execution through AppKit and runtime acceptance remain pending.
 - [ ] **Dependencies:** M04 and M01 fixtures. **Owner/files:** core agent; `macos/EditorCore/`, core test files.
 - Implement checked UTF-16 span analysis, mutation commands, word count, suggested names, newline rules, and URL policy. Preserve current Markdown subset; use existing C++/JS as a reference, not a native runtime dependency.
 - **Acceptance:** fixtures pass for formatting/link commands, trimmed whitespace, escapes, list/quote continuation and exit, numbered list increment, fenced-code Return, soft Return, paired-break deletion, accepted clipboard schemes, and invalid/out-of-range selections. Tests check outcomes rather than copying implementation logic.
 
 ### M06 Integrate native editor and find commands
+
+- **Development slice:** native source editing, formatting, smart Return/paste, and NSTextView find/replace menus are connected. Marker elision, safe link opening, complete command/search UI evidence, and IME acceptance remain pending. Review fixed distant Replace All styling and deferred appearance changes during composition; a separate source review confirmed both blockers resolved. These refinements build but await native revalidation.
 
 - [ ] **Dependencies:** M05 plus accepted M02. **Owner/files:** editor agent; `macos/Editor/`, editor adapter tests.
 - Connect the selected engine to document text/undo; apply display-only spans, source-preserving clipboard behavior, safe link opening, and contextual marker visibility. Add literal source find, next/previous, replace, and Replace All through a native find bar or an equivalent AppKit controller.
@@ -67,11 +76,15 @@ For each task, the implementer reads the named source and dependent artifacts, w
 
 ### M07 Integrate recovery and external conflicts
 
+- **Development slice:** atomic version-1 per-document journal, recovery as untitled copies, one-second path polling, explicit conflict sheets, and save-time baseline checks are implemented. Older smoke verifies journal cleanup and conflict rejection. Bookmarks, legacy import, forced-termination/multi-window tests, and full M03 acceptance remain pending.
+
 - [ ] **Dependencies:** M04 and accepted M03; can run alongside M05. **Owner/files:** persistence agent; `macos/Documents/`, document integration tests. Changes to shared app/window scaffolding go through the integration owner.
 - Implement the selected recovery mechanism, coordinated reads/writes, observation, baseline comparison, sandbox bookmarks, schema versioning, and deterministic conflict sheets. Add optional user-selected import for legacy Qt recovery JSON, retaining originals.
 - **Acceptance:** M03 failure matrix passes in the integrated app. Recovery survives forced process termination and multiple dirty windows; successful Save/Discard cleans only the correct snapshots and saved revisions, retaining newer edits. Save completion does not mark newer edits clean. Legacy import is idempotent, rejects malformed records, and restores inaccessible files as untitled copies. Test recovery version upgrades and shutdown during cleanup.
 
 ### M08 Implement native appearance and rendered printing
+
+- **Development slice:** bundled typography, word-count footer, native scrolling/appearance, text-size controls/fullscreen, and a separate subset Markdown print renderer are implemented. Earlier smoke produced a PDF with rendered text. Pagination, visual/accessibility checks, settings persistence, and full parity remain pending.
 
 - [ ] **Dependencies:** M04, M01 print contract and M02 renderer investigation. **Owner/files:** presentation agent; `macos/Presentation/`, `macos/Printing/`, assets and presentation tests.
 - Add focused editor width, bundled typography, footer count, native scrolling, dynamic light/dark/accent colors, text-size controls, fullscreen, settings, print sheet and PDF output. Route menus to the focused document; standard macOS Hide and Quit shortcuts retain their meaning.
@@ -123,12 +136,21 @@ Checked on 2026-09-30:
 - Passed static checks for qmake source paths, resource assets, desktop/package naming, test target/moc naming, retained persistence identity, and local documentation links.
 - Attempted `./bin/build`: stopped because neither `qmake6` nor `qmake` is installed.
 - Attempted `./bin/test`: stopped because `qmake` is unavailable; no Qt test binary ran.
-- No native build was attempted: the native implementation is planned, and full Xcode remains a toolchain prerequisite.
+- At the initial planning checkpoint, no native build was attempted. Subsequent SwiftPM app build and launch succeeded; full Xcode remains a UI-test prerequisite.
 
-M00 is implemented but remains pending runtime acceptance. The next implementation action is to provision Qt 6 for baseline validation and then execute M01; full Xcode is needed before the native spikes/project tests.
+M00 is implemented but remains pending Qt runtime acceptance. Provision the Qt baseline in a supported Linux environment and full Xcode for the later UI-test pipeline; neither blocks the achieved local SwiftPM launchable milestone.
 
 ## Implementation checkpoint
 
-Initial rename and plan commit: `cad6942`. The user then authorized implementation. Native work currently adds a Swift package, 73 behavior fixtures, source and native test scripts, and a concrete parity/manual acceptance contract. `./bin/test-source-fixtures` passed 35 actual QML/JS handler examples with a simulated TextEdit; two recorded native Return differences are excluded from the source oracle. `./bin/test-macos-core` passed seven Swift Testing test groups after resolving CLT macro-plugin discovery. Full Qt, TextKit UI, document/recovery, and sandbox acceptance remain pending. No native app, signed bundle, or Xcode project is claimed yet.
+Initial rename and plan commit: `cad6942`. The user then authorized implementation. The core checkpoint `8816ff8` adds a Swift package, 73 behavior fixtures, source and native test scripts, and a concrete parity/manual acceptance contract. `./bin/test-source-fixtures` passed 35 actual QML/JS handler examples with a simulated TextEdit; two recorded native Return differences are excluded from the source oracle. `./bin/test-macos-core` passed seven Swift Testing test groups after resolving CLT macro-plugin discovery. Full Qt parity, TextKit elision, document failure-matrix, and sandbox acceptance remain pending. The subsequent native application and local ad-hoc-signed bundle exist; no Xcode UI-test project or distribution signing is claimed.
 
 Final source-grounded review found no unresolved correctness blockers for the initial Foundation-only slice after correcting canonical-equivalence saves, ASCII numbered-list matching, directional Return policy, and URL serialization fixtures. This review does not accept M02/M03 or native UI behavior.
+
+### Launchable app checkpoint — 2026-09-30
+
+- Built `build/mdwrite.app` with Swift 6.4 CLT on Apple silicon macOS 26.7.1; deployment minimum 14. Plists and sandbox signature verify; linked libraries are system libraries, without Qt.
+- Launched the native app and observed its native document editor, menus, footer, and a saved document window. User documents were left untouched during remaining verification.
+- Earlier separate native smoke passed byte preservation, formatting, dirty/undo/redo, explicit Save, recovery/cleanup, rendered PDF, and conflict protection. Source checker passed 35 examples; core passed seven test groups.
+- Source review corrected NSDocument safe-write delegation, stale recovery after undo-to-clean, conflict sheet/deletion deduplication, distant Replace All styling, and deferred appearance changes during composition.
+- Latest build/static checks pass. Expanded native tests (exact saved permissions, failed Save As, distant-range styling) and recent refinements remain unexecuted because automatic approval review reported exhausted workspace credits. No rejected launch was bypassed. Run `./bin/test-macos` in a normal macOS terminal, or resume authorized agent verification when review is available.
+- This native application checkpoint is committed. Next: finish native runtime verification; then complete M02/M03/M09 acceptance, including IME/VoiceOver, lifecycle failures, forced recovery, performance, relocation, and OS/architecture coverage. Keep release signing/notarization separate.

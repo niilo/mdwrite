@@ -1,19 +1,32 @@
 # mdwrite
 
-A dead-simple Markdown writing app built with Qt Quick and C++ that automatically follows system dark/light mode.
+A focused Markdown writing app with a native Swift/AppKit macOS application and the original Qt Quick/C++ Linux implementation. Both follow system light/dark appearance.
 
 <img width="2948" height="3227" alt="screenshot-2026-06-23_15-24-08" src="https://github.com/user-attachments/assets/4e930c0d-edda-4046-b444-a59eff523329" />
 <img width="2948" height="3227" alt="screenshot-2026-06-23_15-23-23" src="https://github.com/user-attachments/assets/8ced7c26-961b-4ded-b263-84403001a951" />
 
 
-## Install
+## Native macOS app
+
+Requires macOS 14 or later and Swift 6 Command Line Tools or Xcode. From this repository:
+
+```sh
+./bin/build-macos
+./bin/run-macos
+```
+
+The build produces `build/mdwrite.app`, with native document windows, Open/Save/Save As, undo/redo, Markdown formatting, find/replace, draft recovery, external-change protection, and rendered printing. Use Command shortcuts on macOS; Command-H hides the app and Control-Command-F enters fullscreen.
+
+This is a launchable development app, locally ad-hoc signed with sandbox entitlements. Markdown markers remain visible and dimmed; syntax elision, accessibility/performance acceptance, and notarized distribution remain pending. See [native development](macos/README.md) for tests and limitations.
+
+## Linux installation
 
 Build locally with `./bin/build` and launch `./build/mdwrite`. On Arch Linux,
 `./bin/install` builds and installs the renamed `mdwrite` package. The upstream
 Omarchy release is still distributed as `omawrite`; this repository rename does
 not publish or rename that external package.
 
-## Shortcuts
+## Linux shortcuts
 
 - `Ctrl+S` saves. Unsaved documents use the XDG desktop portal file picker.
 - `Ctrl+Shift+S` saves as.
@@ -34,7 +47,7 @@ Text follows the desktop text size — `omarchy display text size`, or GNOME's
 `text-scaling-factor` — and re-flows without a restart. The default of 12px leaves
 mdwrite at the size it is designed around; larger and smaller sizes scale from there.
 
-## Requirements
+## Linux requirements
 
 - Qt 6: `qt6-base`, `qt6-declarative`, `qt6-quickcontrols2`
 - `xdg-desktop-portal` and a portal backend
@@ -45,11 +58,10 @@ IBM Plex, copyright IBM Corp.
 
 ## Native macOS migration
 
-The planned native Swift/AppKit app is named `mdwrite`. See the
-[migration plan](docs/macos-port-plan.md) and
-[agent task list](docs/macos-port-tasks.md). The current app still uses Qt. Native implementation has started with a tested
-Swift editor module; see [native development](macos/README.md) and the
-[behavior contract](docs/macos-behavior-contract.md).
+The native Swift/AppKit development app is named `mdwrite`. See the
+[migration plan](docs/macos-port-plan.md),
+[agent task list](docs/macos-port-tasks.md), and
+[behavior contract](docs/macos-behavior-contract.md) for completed checks and remaining release gates.
 
 The Qt app retains its internal `omawrite` application name solely for settings
 and crash-recovery compatibility; its display name and executable are `mdwrite`.

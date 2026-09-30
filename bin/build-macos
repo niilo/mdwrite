@@ -1,0 +1,44 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT/macos/.build/module-cache"
+export CLANG_MODULE_CACHE_PATH="$ROOT/macos/.build/module-cache"
+CONFIGURATION="${MDWRITE_CONFIGURATION:-debug}"
+swift build --package-path "$ROOT/macos" --configuration "$CONFIGURATION" \
+  --cache-path "$ROOT/macos/.build/cache" --config-path "$ROOT/macos/.build/config" \
+  --security-path "$ROOT/macos/.build/security" --disable-sandbox --product mdwriteApp
+PRODUCTS="$(swift build --package-path "$ROOT/macos" --configuration "$CONFIGURATION" \
+  --cache-path "$ROOT/macos/.build/cache" --config-path "$ROOT/macos/.build/config" \
+  --security-path "$ROOT/macos/.build/security" --disable-sandbox --show-bin-path)"
+mkdir -p "$ROOT/build"
+STAGING="$(mktemp -d "$ROOT/build/mdwrite-staging.XXXXXX")"
+trap 'rm -rf "$STAGING"' EXIT HUP INT TERM
+APP="$STAGING/mdwrite.app"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+cp "$PRODUCTS/mdwriteApp" "$APP/Contents/MacOS/mdwrite"
+cp "$ROOT/macos/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT"/fonts/*.ttf "$APP/Contents/Resources/"
+cp "$ROOT/fonts/OFL.txt" "$APP/Contents/Resources/FontLicense.txt"
+cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE"
+# SwiftPM's build engine can emit an internal dynamic library/framework.
+for library in "$PRODUCTS"/*.dylib; do
+  [ -f "$library" ] || continue
+  cp "$library" "$APP/Contents/Frameworks/"
+  codesign --force --sign - "$APP/Contents/Frameworks/$(basename "$library")"
+done
+for framework in "$PRODUCTS"/PackageFrameworks/*.framework; do
+  [ -d "$framework" ] || continue
+  cp -R "$framework" "$APP/Contents/Frameworks/"
+  codesign --force --sign - "$APP/Contents/Frameworks/$(basename "$framework")"
+done
+install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP/Contents/MacOS/mdwrite"
+# Local ad-hoc signing activates the sandbox; this is not a distribution signature.
+codesign --force --sign - --entitlements "$ROOT/macos/mdwrite.entitlements" "$APP"
+codesign --verify --deep --strict "$APP"
+# Replace the bundle directory, never overwrite code mapped by a running app.
+if [ -e "$ROOT/build/mdwrite.app" ]; then
+  PREVIOUS="$(mktemp -d "$ROOT/build/mdwrite-previous.XXXXXX")"
+  mv "$ROOT/build/mdwrite.app" "$PREVIOUS/mdwrite.app"
+fi
+mv "$APP" "$ROOT/build/mdwrite.app"
+printf 'Built %s\n' "$ROOT/build/mdwrite.app"

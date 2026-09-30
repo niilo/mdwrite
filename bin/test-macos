@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+"$ROOT/bin/test-macos-core"
+"$ROOT/bin/build-macos"
+# AppKit requires a logged-in graphical session. Sandboxed app launch needs
+# WindowServer/container access; run this from a normal macOS terminal.
+exec "$ROOT/build/mdwrite.app/Contents/MacOS/mdwrite" --smoke-test

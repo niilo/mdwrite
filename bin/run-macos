@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+if [ ! -d "$ROOT/build/mdwrite.app" ]; then "$ROOT/bin/build-macos"; fi
+exec open "$ROOT/build/mdwrite.app" "$@"

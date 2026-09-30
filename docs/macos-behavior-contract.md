@@ -2,15 +2,15 @@
 
 ## Implementation status
 
-The initial planning and rename changes are committed as `cad6942`. Implementation has started with a Foundation-only Swift package under `macos/`, source-derived fixtures, and reproducible tests. This is not yet a launchable native application. M00's Qt runtime validation remains pending; M01's source contract and initial fixtures are implemented, but its runtime parity matrix is not accepted yet.
+The initial planning and rename changes are committed as `cad6942`. The pure editor implementation is committed as `8816ff8`. A native Swift/AppKit development application now builds under `macos/` and has launched successfully; source-derived fixtures and reproducible tests accompany it. M00's Qt runtime validation remains pending; M01's source contract and initial fixtures are implemented, but its runtime parity matrix is not accepted yet.
 
-The installed Swift 6.4 Command Line Tools can compile and run these Swift Testing checks. Full Xcode is required for the planned Xcode project and UI-test pipeline. Qt baseline validation needs Qt 6 and suitable Linux services; installing Qt on macOS alone does not reproduce the D-Bus/portal integration. Source-only checks below let independent contract work proceed without falsely accepting those gates.
+The installed Swift 6.4 Command Line Tools can compile and run these Swift Testing checks. The SwiftPM-based native bundle also builds with these tools. Full Xcode is required for the future Xcode UI-test pipeline. Qt baseline validation needs Qt 6 and suitable Linux services; installing Qt on macOS alone does not reproduce the D-Bus/portal integration. Source-only checks below let independent contract work proceed without falsely accepting those gates.
 
 ## Decisions for initial implementation
 
 - Native app: `mdwrite`; Swift 6; macOS 14 deployment floor. Initial development validation is Apple silicon; Intel remains a release gate rather than a tested claim.
 - Provisional development bundle identifier: `dev.mdwrite.prototype`. Choose a publisher-controlled namespace before distribution.
-- One document per window in one process. Explicit Save/Save As; autosave in place is disabled by default. Recovery, disk conflicts, and undo/dirty state must pass M03 before selecting their production implementation.
+- One document per window in one process. Explicit Save/Save As; autosave in place is disabled by default. The development implementation uses document undo-manager tracking and an atomic app-owned recovery journal; NSDocument autosaving is disabled. The full M03 failure matrix remains a production acceptance gate.
 - UTF-8 files only. Reject invalid UTF-8 and UTF-16 inputs with a recoverable error; never silently replace bytes with replacement characters.
 - Internal editor text uses LF. Unchanged saves retain the exact original bytes, including UTF-8 BOM, mixed line endings, and trailing newlines. After editing, retain the BOM and the first encountered CR/LF newline style, normalize mixed line endings to that style, and preserve the text's trailing-newline count. New documents use LF without BOM.
 - Editing and span interfaces use UTF-16 location/length pairs. Commands reject ranges that overflow or split a composed character, including surrogate pairs, combining marks, and CRLF pairs. IME-specific adapter handling remains an M02/M06 requirement.
@@ -44,23 +44,29 @@ URLs are compared using Foundation's URL serialization in native tests. Fixtures
 
 ## Runtime acceptance matrix
 
-All rows remain pending native UI validation unless an automated result is explicitly listed. Run these scripts in temporary locations and record OS, hardware, build identifier, and results. Each script corresponds to a migration-plan parity row.
+Rows remain pending full native UI acceptance unless a narrower automated result is explicitly listed. Run these scripts in temporary locations and record OS, hardware, build identifier, and results. Each script corresponds to a migration-plan parity row.
 
 | Area | Acceptance script and evidence |
 | --- | --- |
-| Open/save, filenames, last directory | Open LF/CRLF/BOM/no-trailing-newline files, save unchanged and compare bytes; edit/save and compare with the encoding policy. Reject invalid bytes without changing files. Try denied permission and read-only destination, cancel Save As, reopen the last directory, and open through Finder/recent items. Core encoding/name cases pass; panel/filesystem integration is pending. |
+| Open/save, filenames, last directory | Open LF/CRLF/BOM/no-trailing-newline files, save unchanged and compare bytes; edit/save and compare with the encoding policy. Reject invalid bytes without changing files. Try denied permission and read-only destination, cancel Save As, reopen the last directory, and open through Finder/recent items. Core encoding/name cases pass; native smoke verified unchanged bytes, edited BOM/CRLF Save, and clean-state completion. Panel cancellation and access-denial tests remain pending. |
 | Dirty close/open/quit | Edit two windows, quit, cancel a save panel, then cancel quit. Both drafts remain. Retry with successful save and explicit discard. Failed save must prevent close; undo to saved baseline clears dirty state. |
 | Recovery | Create one unnamed and two named dirty drafts, wait for a committed recovery write, forcibly terminate, and relaunch. Recover separately; retain local and external text if disk changed. Test corrupt/old-version snapshots and interruption during cleanup. |
 | External changes | Use a second process for direct write, atomic replacement, same-content write, move/delete/recreate, and write during Save As. Confirm explicit reload/keep/save-copy behavior; retain conflict evidence and suppress own-save prompts. |
 | Markdown rendering | Type/paste headings, bold, italic, links, lists, quotes, rules, inline and fenced code. Check wrapping and concealed markers without changing source. Compare current heuristic examples and record any intentional divergence. Source span fixtures pass; layout is pending. |
 | Hidden marker editing | Arrow/word/page navigation, selection in both directions, mouse hit testing, delete/backspace across markers, clipboard source copy, IME, and VoiceOver must remain coherent. Restyling must not add undo or dirty state. |
-| Editing commands | Run each fixture through the native text view; one undo restores source and selection. Validate smart Return, Shift-Return, list/quote exit, paired-break delete, paste URL over selection, and escaped link labels/destinations. Pure command fixtures pass; AppKit undo/composition integration is pending. |
+| Editing commands | Run each fixture through the native text view; one undo restores source and selection. Validate smart Return, Shift-Return, list/quote exit, paired-break delete, paste URL over selection, and escaped link labels/destinations. Pure command fixtures pass; native bold/undo/redo and undo-to-clean checks passed. Other commands and composition acceptance remain pending. |
 | Find and replace | Find source text and hidden URL syntax, reveal/select the result, next/previous wrap, replace one and all, undo once, then switch documents. Check Unicode case folding and selection boundaries. |
 | Word count and filename | Compare fixture outputs, then type/delete rapidly and verify no stale count or incorrect dirty state. Large-file latency is measured separately. Pure utility fixtures pass. |
 | Printing | Print representative headings, paragraphs, lists, quotes, inline/fenced code, and links to PDF. Inspect pagination, paper colors, missing glyphs, and clipping. Cancel printing and verify source, dirty state, and undo stay unchanged. |
 | Appearance and scrolling | Switch light/dark/accent while typing, resize and cross Retina/multiple displays, increase text size, and enable increased contrast/Reduce Motion. Check footer/scrollbar separation and keyboard/VoiceOver reachability. |
 | Window lifecycle and commands | New/Open/Save/Save As/Print/Find/Hide/Quit target the correct focused window. Close the last window without losing app menus, reopen a document, restore frames after display removal, and use fullscreen. |
 
-## Next gate
+## Native development evidence and next gates
 
-Source contract and portable implementation review passed with no unresolved correctness blockers for this initial slice. Before accepting M01, obtain the missing Qt runtime evidence or explicitly record any unsupported Linux-only acceptance as a release prerequisite. M02/M03 remain the next native feasibility gates; M04's application/project work must wait for their acceptance. The Foundation module is preparation for those gates, not an early claim that M05 or the complete port is accepted.
+On 2026-09-30, the SwiftPM app bundle built, plist validation and local sandbox signature verification passed, and its Mach-O dependencies contained no Qt. The app launched with native menus, editor, and footer. A saved document window was observed; this is limited UI evidence, not the full lifecycle matrix.
+
+An earlier separate native smoke process passed headless load/byte preservation, bold editing, native dirty tracking, undo/redo, undo-to-clean recovery cleanup, explicit document Save with BOM/CRLF preservation, recovery as an untitled copy, external-save rejection without overwrite, and rendered PDF text. No physical print job was submitted. Subsequent exact-permission, failed-Save-As, and distant-range styling assertions, incremental styling changes, and autosave-disable refinement compile but await native execution: automatic approval review reported exhausted workspace credits.
+
+The current source mode dims markers without eliding them. Printing uses a separate renderer for the recorded Markdown subset; pagination and visual acceptance remain pending. Recovery schema version 1 skips and preserves malformed/unknown records; forced-termination, multiple-process ownership, and denied-access behavior are not yet accepted.
+
+Seven Swift test groups and 35 extracted QML/JS handler examples pass. These checks do not prove IME, VoiceOver, search/replace integration, hidden-marker editing, all lifecycle failures, or performance. Obtain Qt runtime evidence in its supported environment; finish M02/M03 and the integrated hardening matrix before declaring the complete port accepted. The later launchable-app directive permits this development milestone while preserving release gates.
