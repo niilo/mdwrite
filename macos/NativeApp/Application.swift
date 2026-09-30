@@ -140,10 +140,12 @@ struct MDWriteApplication {
         }
         let delegate = ApplicationDelegate()
         installMenus(delegate: delegate)
-        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") || CommandLine.arguments.contains("--format-test") {
+        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") || CommandLine.arguments.contains("--format-test") || CommandLine.arguments.contains("--layout-test") {
             app.setActivationPolicy(.prohibited)
             do {
-                if CommandLine.arguments.contains("--format-test") {
+                if CommandLine.arguments.contains("--layout-test") {
+                    try NativeLayoutChecks.run()
+                } else if CommandLine.arguments.contains("--format-test") {
                     try NativeFormatChecks.run()
                 } else if CommandLine.arguments.contains("--markdown-test") {
                     try NativeMarkdownChecks.run()

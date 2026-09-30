@@ -59,6 +59,9 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true
+        // Autoresizing preserves the document/viewport width difference. Start
+        // them at the same width before attachment, including a zero-size clip.
+        editor.setFrameSize(NSSize(width: scroll.contentSize.width, height: editor.frame.height))
         scroll.documentView = editor
         let footer = NSView()
         footer.translatesAutoresizingMaskIntoConstraints = false

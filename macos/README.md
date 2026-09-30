@@ -38,6 +38,8 @@ Use `--markdown-test` for the complete element/key audit and add `--style-previe
 
 Use `--format-test` for all Format/toolbox commands, with `--format-preview` for temporary light/dark window PNGs.
 
+The editor wraps to the scroll viewport with equal side insets, including after window resizing. `--layout-test` checks viewport sizing, symmetric padding, long paragraph/quote/list/code wrapping, resize reflow, and source/undo preservation at 560, 800, and 1200 points. Add `--layout-preview` to export light/dark window PNGs.
+
 ## Organization and remaining gates
 
 `EditorCore/` owns pure checked UTF-16 edits, spans, utilities, and UTF-8 serialization. `NativeApp/` owns documents, windows, editing adapters, recovery, printing, and the smoke harness. A document-owned text storage supports loading before a window exists; its undo manager supplies dirty tracking.
