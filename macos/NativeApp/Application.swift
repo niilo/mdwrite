@@ -108,10 +108,9 @@ func installMenus(delegate: ApplicationDelegate) {
         item(edit, title, #selector(NSTextView.performTextFinderAction(_:)), key, modifiers: modifiers)
         edit.items.last?.tag = tag.rawValue
     }
-    let format = submenu("Format")
-    item(format, "Bold", #selector(MarkdownTextView.makeBold(_:)), "b")
-    item(format, "Italic", #selector(MarkdownTextView.makeItalic(_:)), "i")
-    item(format, "Insert Link", #selector(MarkdownTextView.insertMarkdownLink(_:)), "k")
+    let format = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
+    format.submenu = MarkdownFormatMenu.make()
+    bar.addItem(format)
     let view = submenu("View")
     item(view, "Larger Text", #selector(MarkdownTextView.increaseTextSize(_:)), "+")
     item(view, "Smaller Text", #selector(MarkdownTextView.decreaseTextSize(_:)), "-")
@@ -141,10 +140,12 @@ struct MDWriteApplication {
         }
         let delegate = ApplicationDelegate()
         installMenus(delegate: delegate)
-        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") {
+        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") || CommandLine.arguments.contains("--format-test") {
             app.setActivationPolicy(.prohibited)
             do {
-                if CommandLine.arguments.contains("--markdown-test") {
+                if CommandLine.arguments.contains("--format-test") {
+                    try NativeFormatChecks.run()
+                } else if CommandLine.arguments.contains("--markdown-test") {
                     try NativeMarkdownChecks.run()
                 } else if CommandLine.arguments.contains("--style-test") {
                     try NativeSmoke.runFormatting()

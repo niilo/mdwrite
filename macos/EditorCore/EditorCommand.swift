@@ -5,6 +5,7 @@ public enum EditorCommand: Sendable {
     case replace(String)
     case bold
     case italic
+    case format(MarkdownFormat)
     case link(clipboard: String)
     case paste(String)
     case insertReturn(soft: Bool)

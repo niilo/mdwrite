@@ -26,6 +26,8 @@ The native editor styles standard Markdown and common GitHub-style extensions wh
 
 Printing now uses Foundation's semantic parsing for headings, quotes, lists/tasks, code, emphasis, references, and tables rather than a separate collection of line regexes. It renders a separate snapshot with paper colors; image alt text and raw HTML remain textual. Table pagination and the full print acceptance matrix remain release gates.
 
+The [formatting toolbox](macos-formatting-toolbox.md) exposes source-insertion actions for the audited elements in both the toolbar and Format menu.
+
 ## Enter and Backspace
 
 Enter inserts exactly one LF in ordinary text. A second press inserts another explicit newline. Existing CRLF documents serialize each inserted LF as exactly one CRLF. Nonempty lists continue their marker (and increment ordered numbers); tasks continue unchecked. Nested quote prefixes and quoted lists continue. Empty list/task/quote items exit their structure. Code preserves indentation and quote context without interpreting literal list/quote text as structure.

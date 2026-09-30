@@ -2,7 +2,7 @@ import AppKit
 import EditorCore
 
 @MainActor
-final class EditorWindowController: NSWindowController, NSTextViewDelegate {
+final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSToolbarDelegate {
     let editor: MarkdownTextView
     private let countLabel = NSTextField(labelWithString: "0 words")
     private let statusLabel = NSTextField(labelWithString: "")
@@ -26,6 +26,11 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate {
         window.center()
         super.init(window: window)
         window.setFrameAutosaveName("mdwrite.editor")
+        let toolbar = NSToolbar(identifier: "mdwrite.editor.toolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        window.toolbar = toolbar
         editor.delegate = self
         editor.isRichText = false
         editor.importsGraphics = false
@@ -90,6 +95,33 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("Storyboard initialization is not used") }
+
+    private static let formatItem = NSToolbarItem.Identifier("mdwrite.format")
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [Self.formatItem, .flexibleSpace]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [Self.formatItem, .flexibleSpace]
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        guard identifier == Self.formatItem else { return nil }
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = "Format"
+        item.paletteLabel = "Markdown Formatting"
+        item.toolTip = "Insert Markdown formatting into the current document"
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 130, height: 28), pullsDown: true)
+        let menu = MarkdownFormatMenu.make(target: editor)
+        menu.insertItem(NSMenuItem(title: "Format", action: nil, keyEquivalent: ""), at: 0)
+        popup.menu = menu
+        popup.setAccessibilityLabel("Markdown formatting")
+        popup.setAccessibilityIdentifier("formatToolbox")
+        item.view = popup
+        return item
+    }
 
     func undoManager(for view: NSTextView) -> UndoManager? { markdownDocument?.undoManager }
 

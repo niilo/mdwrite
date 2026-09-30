@@ -45,6 +45,16 @@ final class MarkdownTextView: NSTextView {
         apply(.link(clipboard: NSPasteboard.general.string(forType: .string) ?? ""))
     }
 
+    @objc func applyMarkdownFormat(_ sender: NSMenuItem) {
+        guard let format = MarkdownFormat(rawValue: sender.tag) else { return }
+        window?.makeFirstResponder(self)
+        if format == .link {
+            insertMarkdownLink(sender)
+        } else {
+            apply(.format(format))
+        }
+    }
+
     @objc func increaseTextSize(_ sender: Any?) { setWriterFontSize(writerFontSize + 2) }
     @objc func decreaseTextSize(_ sender: Any?) { setWriterFontSize(writerFontSize - 2) }
     @objc func resetTextSize(_ sender: Any?) { setWriterFontSize(20) }
@@ -62,6 +72,7 @@ final class MarkdownTextView: NSTextView {
                 switch command {
                 case .bold: name = "Bold"
                 case .italic: name = "Italic"
+                case .format(let format): name = format.title
                 case .link: name = "Insert Link"
                 case .paste: name = "Paste"
                 default: name = "Edit"

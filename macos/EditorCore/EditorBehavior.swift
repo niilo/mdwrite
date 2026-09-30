@@ -13,6 +13,10 @@ public enum EditorBehavior {
             return wrapping(selected, in: selection, before: "**", after: "**")
         case .italic:
             return wrapping(selected, in: selection, before: "*", after: "*")
+        case .format(let format):
+            let edit = try MarkdownFormatting.edit(format, in: source, selection: selection)
+            let replaced = String(source[try checkedRange(edit.range, in: source)])
+            return Data(replaced.utf8) == Data(edit.replacement.utf8) ? nil : edit
         case .link(let clipboard):
             let label = escapeLinkText(selected.isEmpty ? "link text" : selected)
             let destination = normalizedLinkURL(clipboard) ?? "https://"
@@ -180,13 +184,13 @@ public enum EditorBehavior {
         return replacing(selection, with: "\n" + quotePrefix)
     }
 
-    private static func escapeLinkText(_ text: String) -> String {
+    static func escapeLinkText(_ text: String) -> String {
         text.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "[", with: "\\[")
             .replacingOccurrences(of: "]", with: "\\]")
     }
 
-    private static func escapeLinkDestination(_ text: String) -> String {
+    static func escapeLinkDestination(_ text: String) -> String {
         text.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "(", with: "\\(")
             .replacingOccurrences(of: ")", with: "\\)")
