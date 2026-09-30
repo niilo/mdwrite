@@ -120,6 +120,7 @@ enum NativeMarkdownChecks {
             try input.read(from: Data(initial.utf8), ofType: "net.daringfireball.markdown")
             input.makeWindowControllers()
             let inputEditor = input.editorController!.editor
+            inputEditor.enterEditMode(nil)
             inputEditor.setSelectedRange(selection ?? NSRange(location: initial.utf16.count, length: 0))
             let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
                                         windowNumber: input.editorController!.window!.windowNumber, context: nil,
@@ -137,6 +138,7 @@ enum NativeMarkdownChecks {
         try input.read(from: Data("hello\r\nworld".utf8), ofType: "net.daringfireball.markdown")
         input.makeWindowControllers()
         let inputEditor = input.editorController!.editor
+        inputEditor.enterEditMode(nil)
         inputEditor.setSelectedRange(NSRange(location: inputEditor.string.utf16.count, length: 0))
         inputEditor.insertNewline(nil)
         expect(try input.data(ofType: "net.daringfireball.markdown") == Data("hello\r\nworld\r\n".utf8),

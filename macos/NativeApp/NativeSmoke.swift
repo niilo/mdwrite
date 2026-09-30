@@ -62,6 +62,7 @@ enum NativeSmoke {
         let opening = location("```swift")
         let closing = (editor.string as NSString).range(of: "```\n# After")
         editor.setSelectedRange(NSRange(location: opening, length: closing.location + 4 - opening))
+        editor.enterEditMode(nil)
         editor.apply(.replace("plain\n"))
         if document.sourceStorage.attribute(.backgroundColor, at: location("plain"), effectiveRange: nil) != nil
             || font("After").pointSize <= font("plain").pointSize {
@@ -83,6 +84,7 @@ enum NativeSmoke {
         try NativeMarkdownChecks.run()
         try NativeFormatChecks.run()
         try NativeLayoutChecks.run()
+        try NativeModeChecks.run()
         func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
             if !condition() {
                 throw NSError(domain: "mdwrite.smoke", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
@@ -106,6 +108,7 @@ enum NativeSmoke {
         let untouched = try document.data(ofType: document.fileType!)
         try check(untouched == original, "unchanged document preserves bytes")
         try check(!document.isDocumentEdited, "newly opened document is clean")
+        editor.enterEditMode(nil)
         editor.setSelectedRange(NSRange(location: 9, length: 5))
         editor.apply(.bold)
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
@@ -175,6 +178,7 @@ enum NativeSmoke {
         stylingDocument.sourceStorage.setAttributedString(NSAttributedString(string: "**first**\n\n**second**"))
         stylingDocument.makeWindowControllers()
         let stylingEditor = stylingDocument.editorController!.editor
+        stylingEditor.enterEditMode(nil)
         stylingEditor.restyle()
         let markers = try NSRegularExpression(pattern: #"\*\*"#)
         let matches = markers.matches(in: stylingEditor.string,

@@ -30,6 +30,7 @@ enum NativeFormatChecks {
             document.makeWindowControllers()
             let controller = document.editorController!
             let editor = controller.editor
+            editor.enterEditMode(nil)
             let selection = (source as NSString).range(of: content)
             editor.setSelectedRange(selection)
             let command: EditorCommand = format == .link
@@ -78,6 +79,7 @@ enum NativeFormatChecks {
         try unchanged.read(from: Data("plain text".utf8), ofType: "net.daringfireball.markdown")
         unchanged.makeWindowControllers()
         let editor = unchanged.editorController!.editor
+        editor.enterEditMode(nil)
         editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
         for format in [MarkdownFormat.paragraph, .outdent, .escape] { editor.apply(.format(format)) }
         try expect(editor.string == "plain text" && !unchanged.isDocumentEdited && unchanged.undoManager?.canUndo != true,

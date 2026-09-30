@@ -2,10 +2,13 @@ import AppKit
 import EditorCore
 
 @MainActor
-final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSToolbarDelegate {
+final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSToolbarDelegate, NSMenuItemValidation {
     let editor: MarkdownTextView
     private let countLabel = NSTextField(labelWithString: "0 words")
     private let statusLabel = NSTextField(labelWithString: "")
+    private let modeLabel = NSTextField(labelWithString: "View only · E to edit")
+    private let modeControl = NSSegmentedControl(labels: ["View", "Edit"], trackingMode: .selectOne, target: nil, action: nil)
+    private weak var formatControl: NSPopUpButton?
     private var footerTimer: Timer?
     private weak var markdownDocument: MarkdownDocument?
 
@@ -35,6 +38,8 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         editor.isRichText = false
         editor.importsGraphics = false
         editor.allowsUndo = true
+        editor.setMode(.view)
+        editor.modeDidChange = { [weak self] _ in self?.refreshModeControls() }
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false
@@ -50,7 +55,6 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         editor.usesFindBar = true
         editor.isIncrementalSearchingEnabled = true
         editor.setAccessibilityIdentifier("sourceEditor")
-        editor.setAccessibilityLabel("Markdown document")
         editor.sourceDidChange = { [weak document] in document?.sourceChanged() }
         editor.onCommandError = { [weak self] error in self?.showStatus(error.localizedDescription) }
 
@@ -65,7 +69,7 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         scroll.documentView = editor
         let footer = NSView()
         footer.translatesAutoresizingMaskIntoConstraints = false
-        for label in [countLabel, statusLabel] {
+        for label in [countLabel, statusLabel, modeLabel] {
             label.translatesAutoresizingMaskIntoConstraints = false
             label.font = .systemFont(ofSize: 11)
             label.textColor = .secondaryLabelColor
@@ -88,29 +92,47 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
             footer.heightAnchor.constraint(equalToConstant: 30),
             countLabel.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -20),
             countLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-            statusLabel.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 20),
+            modeLabel.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 20),
+            modeLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            statusLabel.leadingAnchor.constraint(equalTo: modeLabel.trailingAnchor, constant: 16),
             statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: countLabel.leadingAnchor, constant: -20),
             statusLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor)
         ])
         editor.restyle()
         refreshFooter()
+        refreshModeControls()
         window.makeFirstResponder(editor)
     }
 
     required init?(coder: NSCoder) { fatalError("Storyboard initialization is not used") }
 
     private static let formatItem = NSToolbarItem.Identifier("mdwrite.format")
+    private static let modeItem = NSToolbarItem.Identifier("mdwrite.mode")
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.formatItem, .flexibleSpace]
+        [Self.modeItem, Self.formatItem, .flexibleSpace]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.formatItem, .flexibleSpace]
+        [Self.modeItem, Self.formatItem, .flexibleSpace]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if identifier == Self.modeItem {
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Mode"
+            modeControl.target = self
+            modeControl.action = #selector(chooseMode(_:))
+            modeControl.selectedSegment = editor.mode == .view ? 0 : 1
+            modeControl.setToolTip("Read without modifying the document", forSegment: 0)
+            modeControl.setToolTip("Edit the Markdown source", forSegment: 1)
+            modeControl.setAccessibilityLabel("Document mode")
+            modeControl.setAccessibilityIdentifier("editorMode")
+            modeControl.sizeToFit()
+            item.view = modeControl
+            return item
+        }
         guard identifier == Self.formatItem else { return nil }
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = "Format"
@@ -122,8 +144,43 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         popup.menu = menu
         popup.setAccessibilityLabel("Markdown formatting")
         popup.setAccessibilityIdentifier("formatToolbox")
+        popup.isEnabled = editor.mode == .edit
+        formatControl = popup
         item.view = popup
         return item
+    }
+
+    @objc func chooseMode(_ sender: NSSegmentedControl) {
+        editor.setMode(sender.selectedSegment == 1 ? .edit : .view)
+        window?.makeFirstResponder(editor)
+    }
+
+    @objc func enterViewMode(_ sender: Any?) {
+        editor.enterViewMode(sender)
+        window?.makeFirstResponder(editor)
+    }
+
+    @objc func enterEditMode(_ sender: Any?) {
+        editor.enterEditMode(sender)
+        window?.makeFirstResponder(editor)
+    }
+
+    // Keep history commands gated even when a toolbar control has focus.
+    @objc func undo(_ sender: Any?) { editor.undo(sender) }
+    @objc func redo(_ sender: Any?) { editor.redo(sender) }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if [#selector(undo(_:)), #selector(redo(_:)), #selector(enterViewMode(_:)), #selector(enterEditMode(_:))]
+            .contains(item.action) {
+            return editor.validateMenuItem(item)
+        }
+        return true
+    }
+
+    private func refreshModeControls() {
+        modeControl.selectedSegment = editor.mode == .view ? 0 : 1
+        formatControl?.isEnabled = editor.mode == .edit
+        modeLabel.stringValue = editor.mode == .view ? "View only · E to edit" : "Edit mode"
     }
 
     func undoManager(for view: NSTextView) -> UndoManager? { markdownDocument?.undoManager }

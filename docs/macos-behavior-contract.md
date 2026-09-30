@@ -22,7 +22,7 @@ The installed Swift 6.4 Command Line Tools can compile and run these Swift Testi
 `tests/fixtures/editor-behavior.json` contains 37 source edit examples and 36 utility/span examples. Every range is a UTF-16 `[location, length]` pair. Examples come from existing Qt tests and directly inspected handlers. The fixture file is shared across source checks and native checks.
 
 - `./bin/test-source-fixtures`: execute extracted functions from the real `src/Main.qml` and `src/EditorMutations.js` against 35 edit fixtures with a small in-memory TextEdit adapter. This validates handler logic only; Qt signals, actual layout, caret semantics, and undo are not simulated accurately enough to accept runtime parity.
-- `./bin/test-macos-core`: build the dependency-free Swift package and run Swift Testing checks. Its fourteen test groups cover all 73 fixtures, rejected Unicode/overflow ranges, safe filename truncation, and byte-preserving encoding round trips/errors.
+- `./bin/test-macos-core`: build the dependency-free Swift package and run Swift Testing checks. Its nineteen test groups cover all 73 fixtures, rejected Unicode/overflow ranges, safe filename truncation, source-formatting commands, and byte-preserving encoding round trips/errors.
 - `./bin/test`: existing Qt tests; currently blocked by missing qmake. Run in a supported Qt environment before accepting the reference application and its rename.
 
 These are automated outcomes, not screenshots or UI acceptance. Add fixtures when an example exposes a new behavioral branch; do not adjust expected values merely to make an implementation pass.
@@ -31,6 +31,7 @@ These are automated outcomes, not screenshots or UI acceptance. Add fixtures whe
 
 | Case | Existing behavior | Native expectation and reason |
 | --- | --- | --- |
+| Default editing mode | Qt opens an editable source document. | User-requested native View mode is read-only by default. E in the document or the Edit button enables changes; View locks them again. Modes preserve unsaved source/history and are independent per window. See [the mode contract](macos-view-edit-modes.md). |
 | Empty list item with an active selection | Smart Return removes the prefix only; selected source can remain behind. | Consume the active selection while exiting the list. Fixture `return-empty-list-with-selection` captures this correctness change; source oracle intentionally excludes it. |
 | Ordinary Enter and Backspace | Qt inserts two paragraph newlines and can delete a pair together. | User-requested native behavior inserts one newline and deletes one newline. Shared fixtures keep Qt expectations and separate native expectations. |
 | Return with a directional selection | QML computes context at the active caret, so selection direction can change list continuation. | Compute context at the replacement start in both directions. Whole-list selection becomes one newline consistently; forward selection fixture records this difference. |
@@ -46,6 +47,8 @@ URLs are compared using Foundation's URL serialization in native tests. Fixtures
 ## Runtime acceptance matrix
 
 Rows remain pending full native UI acceptance unless a narrower automated result is explicitly listed. Run these scripts in temporary locations and record OS, hardware, build identifier, and results. Each script corresponds to a migration-plan parity row.
+
+Native scripts that modify a document must first press E in the focused document or choose Edit. Read-only checks remain in the default View mode.
 
 | Area | Acceptance script and evidence |
 | --- | --- |
@@ -70,7 +73,7 @@ An earlier separate native smoke process passed headless load/byte preservation,
 
 The current source mode dims markers without eliding them. ATX headings have six sizes with proportional text-size scaling. Fenced backtick/tilde code uses a monospaced font and a paragraph-width light/dark background, including blank lines and unfinished blocks. Inline code is shaded; Markdown syntax inside code is literal. This heading-size hierarchy and fenced-block styling are recorded native presentation improvements. Printing uses a separate Foundation semantic renderer for the documented Markdown profile; pagination and visual acceptance remain pending. Recovery schema version 1 skips and preserves malformed/unknown records; forced-termination, multiple-process ownership, and denied-access behavior are not yet accepted.
 
-Fourteen Swift test groups and 35 extracted QML/JS handler examples pass. These checks do not prove IME, VoiceOver, search/replace integration, hidden-marker editing, all lifecycle failures, or performance. Obtain Qt runtime evidence in its supported environment; finish M02/M03 and the integrated hardening matrix before declaring the complete port accepted. The later launchable-app directive permits this development milestone while preserving release gates.
+Nineteen Swift test groups and 35 extracted QML/JS handler examples pass. These checks do not prove IME, VoiceOver, full search/replace acceptance, hidden-marker editing, all lifecycle failures, or performance. Obtain Qt runtime evidence in its supported environment; finish M02/M03 and the integrated hardening matrix before declaring the complete port accepted. The later launchable-app directive permits this development milestone while preserving release gates.
 
 The native formatting regression first reproduced equal 20-point heading sizes, absent fence backgrounds, and bold formatting inside fenced code. After adding block context and presentation rules, the same check passes, along with font scaling, removal of stale code styling after fence edits, source-preserving undo, and editor PDF drawing. Parser tests cover UTF-16/emoji ranges, heading levels, delimiter type/length, and incomplete fences.
 

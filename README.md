@@ -15,7 +15,7 @@ Requires macOS 14 or later and Swift 6 Command Line Tools or Xcode. From this re
 ./bin/run-macos
 ```
 
-The build produces `build/mdwrite.app`, with native document windows, Open/Save/Save As, undo/redo, a [complete source-formatting toolbox](docs/macos-formatting-toolbox.md), find/replace, draft recovery, external-change protection, and rendered printing. Use Command shortcuts on macOS; Command-H hides the app and Control-Command-F enters fullscreen. The toolbar and Format menu share 37 Markdown actions; Command-Option-1–6 apply headings.
+The build produces `build/mdwrite.app`, with native document windows, Open/Save/Save As, undo/redo, a [complete source-formatting toolbox](docs/macos-formatting-toolbox.md), find/replace, draft recovery, external-change protection, and rendered printing. Documents default to [read-only View mode](docs/macos-view-edit-modes.md): press E in the document or click Edit to enable changes; click View to lock it again. Use Command shortcuts on macOS; Command-H hides the app and Control-Command-F enters fullscreen. The toolbar and Format menu share 37 Markdown actions in Edit mode; Command-Option-1–6 apply headings.
 
 This is a launchable development app, locally ad-hoc signed with sandbox entitlements. Headings, quotes/lists/tasks, rules, tables, emphasis/links, and code now have native source styling. Enter inserts one line break with contextual continuation. See the [Markdown coverage audit](docs/macos-markdown-coverage.md). Markdown markers remain visible and dimmed; syntax elision, accessibility/performance acceptance, and notarized distribution remain pending. See [native development](macos/README.md) for tests and limitations.
 

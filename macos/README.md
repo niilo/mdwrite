@@ -16,6 +16,8 @@ The bundle is `build/mdwrite.app`. It contains Markdown/plain-text document decl
 
 Native menus provide New/Open/Save/Save As, Print, undo/redo, find/replace, text size, and fullscreen. The toolbar and Format menu share a [37-action Markdown toolbox](../docs/macos-formatting-toolbox.md), including headings, lists/tasks, quotes, code, tables, links/images, footnotes, and HTML source. Markdown source remains editable, with heading hierarchy, quotes/lists/tasks, rules, tables, emphasis/links, and literal shaded code. See the [element coverage audit](../docs/macos-markdown-coverage.md) for source presentations and limits. Enter inserts one newline, preserving list/quote continuation; Shift-Enter skips continuation. Save is explicit; drafts use a separate atomic recovery journal. After an abnormal exit, records reopen as untitled copies. Recovery is debounced by 500 ms, so the most recent edits can be absent from a crash snapshot. External changes are polled each second and rechecked against the baseline during coordinated Save. Noncooperating writers can still race a save.
 
+Documents start in [View mode](../docs/macos-view-edit-modes.md), which allows reading, selecting/copying, Find, and printing. Press **E** in the document or choose **Edit** in the toolbar to enable changes. Choose **View** to lock changes again. Mode switches retain unsaved edits and undo history; each window is independent.
+
 ## Checks
 
 ```sh
@@ -39,6 +41,8 @@ Use `--markdown-test` for the complete element/key audit and add `--style-previe
 Use `--format-test` for all Format/toolbox commands, with `--format-preview` for temporary light/dark window PNGs.
 
 The editor wraps to the scroll viewport with equal side insets, including after window resizing. `--layout-test` checks viewport sizing, symmetric padding, long paragraph/quote/list/code wrapping, resize reflow, and source/undo preservation at 560, 800, and 1200 points. Add `--layout-preview` to export light/dark window PNGs.
+
+Use `--mode-test` for default read-only state, blocked mutations, copy/Find, E, mode buttons, history, composition, recovery defaults, and window isolation. Add `--mode-preview` for both modes in light/dark window PNGs. Editing regressions explicitly enter Edit mode.
 
 ## Organization and remaining gates
 

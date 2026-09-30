@@ -112,6 +112,9 @@ func installMenus(delegate: ApplicationDelegate) {
     format.submenu = MarkdownFormatMenu.make()
     bar.addItem(format)
     let view = submenu("View")
+    item(view, "View Mode", #selector(MarkdownTextView.enterViewMode(_:)))
+    item(view, "Edit Mode", #selector(MarkdownTextView.enterEditMode(_:)))
+    view.addItem(.separator())
     item(view, "Larger Text", #selector(MarkdownTextView.increaseTextSize(_:)), "+")
     item(view, "Smaller Text", #selector(MarkdownTextView.decreaseTextSize(_:)), "-")
     item(view, "Reset Text Size", #selector(MarkdownTextView.resetTextSize(_:)), "0")
@@ -140,10 +143,12 @@ struct MDWriteApplication {
         }
         let delegate = ApplicationDelegate()
         installMenus(delegate: delegate)
-        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") || CommandLine.arguments.contains("--format-test") || CommandLine.arguments.contains("--layout-test") {
+        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") || CommandLine.arguments.contains("--format-test") || CommandLine.arguments.contains("--layout-test") || CommandLine.arguments.contains("--mode-test") {
             app.setActivationPolicy(.prohibited)
             do {
-                if CommandLine.arguments.contains("--layout-test") {
+                if CommandLine.arguments.contains("--mode-test") {
+                    try NativeModeChecks.run()
+                } else if CommandLine.arguments.contains("--layout-test") {
                     try NativeLayoutChecks.run()
                 } else if CommandLine.arguments.contains("--format-test") {
                     try NativeFormatChecks.run()

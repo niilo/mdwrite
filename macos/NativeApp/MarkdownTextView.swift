@@ -1,13 +1,49 @@
 import AppKit
 import EditorCore
 
+enum EditorMode {
+    case view, edit
+}
+
 @MainActor
 final class MarkdownTextView: NSTextView {
     var sourceDidChange: (() -> Void)?
     var onCommandError: ((Error) -> Void)?
+    var modeDidChange: ((EditorMode) -> Void)?
+    private(set) var mode: EditorMode = .view
     var writerFontSize: CGFloat = 20
 
+    func setMode(_ next: EditorMode) {
+        guard mode != next || isEditable != (next == .edit) else { return }
+        // Finish an existing composition before locking subsequent input.
+        if next == .view && hasMarkedText() { unmarkText() }
+        mode = next
+        isEditable = next == .edit
+        isSelectable = true
+        setAccessibilityLabel(next == .view ? "Markdown document, view mode" : "Markdown document, edit mode")
+        modeDidChange?(next)
+    }
+
+    @objc func enterViewMode(_ sender: Any?) { setMode(.view) }
+    @objc func enterEditMode(_ sender: Any?) { setMode(.edit) }
+
+    @objc func undo(_ sender: Any?) {
+        guard mode == .edit, !hasMarkedText() else { return }
+        undoManager?.undo()
+    }
+
+    @objc func redo(_ sender: Any?) {
+        guard mode == .edit, !hasMarkedText() else { return }
+        undoManager?.redo()
+    }
+
     override func keyDown(with event: NSEvent) {
+        if mode == .view, event.charactersIgnoringModifiers?.lowercased() == "e",
+           event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+           !hasMarkedText() {
+            enterEditMode(nil)
+            return
+        }
         if [36, 76].contains(event.keyCode), event.modifierFlags.contains(.shift),
            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
            !hasMarkedText() {
@@ -17,7 +53,32 @@ final class MarkdownTextView: NSTextView {
         super.keyDown(with: event)
     }
 
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        guard mode == .edit else { return }
+        super.insertText(string, replacementRange: replacementRange)
+    }
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        guard mode == .edit else { return }
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+    }
+
+    override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        mode == .edit && super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
+    }
+
+    override func shouldChangeText(inRanges affectedRanges: [NSValue], replacementStrings: [String]?) -> Bool {
+        mode == .edit && super.shouldChangeText(inRanges: affectedRanges, replacementStrings: replacementStrings)
+    }
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(undo(_:)) { undo(nil); return }
+        if selector == #selector(redo(_:)) { redo(nil); return }
+        super.doCommand(by: selector)
+    }
+
     override func paste(_ sender: Any?) {
+        guard mode == .edit else { return }
         guard !hasMarkedText(), let text = NSPasteboard.general.string(forType: .string) else {
             super.paste(sender)
             return
@@ -25,12 +86,19 @@ final class MarkdownTextView: NSTextView {
         apply(.paste(text))
     }
 
+    override func cut(_ sender: Any?) {
+        guard mode == .edit else { return }
+        super.cut(sender)
+    }
+
     override func insertNewline(_ sender: Any?) {
+        guard mode == .edit else { return }
         guard !hasMarkedText() else { super.insertNewline(sender); return }
         apply(.insertReturn(soft: false))
     }
 
     override func insertLineBreak(_ sender: Any?) {
+        guard mode == .edit else { return }
         guard !hasMarkedText() else { super.insertLineBreak(sender); return }
         apply(.insertReturn(soft: true))
     }
@@ -46,6 +114,7 @@ final class MarkdownTextView: NSTextView {
     }
 
     @objc func applyMarkdownFormat(_ sender: NSMenuItem) {
+        guard mode == .edit else { return }
         guard let format = MarkdownFormat(rawValue: sender.tag) else { return }
         window?.makeFirstResponder(self)
         if format == .link {
@@ -65,7 +134,7 @@ final class MarkdownTextView: NSTextView {
     }
 
     func apply(_ command: EditorCommand) {
-        guard !hasMarkedText() else { return }
+        guard mode == .edit, !hasMarkedText() else { return }
         do {
             if let edit = try EditorBehavior.edit(command, in: string, selection: selectedRange()) {
                 let name: String
@@ -86,7 +155,7 @@ final class MarkdownTextView: NSTextView {
     }
 
     func apply(_ edit: SourceEdit, name: String) {
-        guard let textStorage else { return }
+        guard mode == .edit, !hasMarkedText(), let textStorage else { return }
         do {
             _ = try edit.applying(to: string)
             guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
@@ -108,6 +177,36 @@ final class MarkdownTextView: NSTextView {
         // Blocks and reference definitions can change the style of distant source.
         if !hasMarkedText() { restyle() }
         sourceDidChange?()
+    }
+
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(applyMarkdownFormat(_:)), #selector(makeBold(_:)), #selector(makeItalic(_:)),
+             #selector(insertMarkdownLink(_:)):
+            return mode == .edit && !hasMarkedText()
+        case #selector(undo(_:)): return mode == .edit && !hasMarkedText() && undoManager?.canUndo == true
+        case #selector(redo(_:)): return mode == .edit && !hasMarkedText() && undoManager?.canRedo == true
+        case #selector(enterViewMode(_:)):
+            item.state = mode == .view ? .on : .off
+            return true
+        case #selector(enterEditMode(_:)):
+            item.state = mode == .edit ? .on : .off
+            return true
+        case #selector(performTextFinderAction(_:)):
+            if mode == .view && Self.isReplacementAction(item.tag) { return false }
+        default: break
+        }
+        return super.validateMenuItem(item)
+    }
+
+    override func performTextFinderAction(_ sender: Any?) {
+        if mode == .view, let item = sender as? NSMenuItem, Self.isReplacementAction(item.tag) { return }
+        super.performTextFinderAction(sender)
+    }
+
+    private static func isReplacementAction(_ tag: Int) -> Bool {
+        [.showReplaceInterface, .replace, .replaceAll, .replaceAllInSelection, .replaceAndFind]
+            .contains(NSTextFinder.Action(rawValue: tag))
     }
 
     override func viewDidChangeEffectiveAppearance() {

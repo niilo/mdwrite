@@ -2,6 +2,8 @@
 
 Open **Format** in the window toolbar or the macOS menu bar. Both expose the same 37 actions, grouped by purpose.
 
+Documents start in [View mode](macos-view-edit-modes.md). Press **E** in the document or click **Edit** to enable the toolbox. **View** disables source changes and formatting again.
+
 | Group | Options |
 | --- | --- |
 | Inline | Bold, italic, bold and italic, strikethrough, inline code. |
