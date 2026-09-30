@@ -11,7 +11,7 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate {
 
     init(document: MarkdownDocument) {
         markdownDocument = document
-        let manager = NSLayoutManager()
+        let manager = MarkdownLayoutManager()
         let container = NSTextContainer(size: NSSize(width: 780, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = true
         document.sourceStorage.addLayoutManager(manager)

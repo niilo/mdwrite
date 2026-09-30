@@ -142,10 +142,14 @@ struct MDWriteApplication {
         let delegate = ApplicationDelegate()
         app.delegate = delegate
         installMenus(delegate: delegate)
-        if CommandLine.arguments.contains("--smoke-test") {
+        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") {
             app.setActivationPolicy(.prohibited)
             do {
-                try NativeSmoke.run()
+                if CommandLine.arguments.contains("--style-test") {
+                    try NativeSmoke.runFormatting()
+                } else {
+                    try NativeSmoke.run()
+                }
                 exit(0)
             } catch {
                 fputs("FAIL: \(error)\n", stderr)

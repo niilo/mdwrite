@@ -8,6 +8,7 @@ final class MarkdownTextView: NSTextView {
     var writerFontSize: CGFloat = 20
     private var editedSourceRange: NSRange?
     private var pendingFullRestyle = false
+    private var hadCodeFence = false
 
     override func paste(_ sender: Any?) {
         guard !hasMarkedText(), let text = NSPasteboard.general.string(forType: .string) else {
@@ -116,8 +117,13 @@ final class MarkdownTextView: NSTextView {
             return
         }
         let fullSource = string as NSString
+        let blocks = MarkdownBlocks.parse(string)
+        let codeBlocks = blocks.filter { $0.kind == .fencedCode }
+        // Adding or removing a delimiter changes the interpretation of later lines.
+        let needsFullRestyle = pendingFullRestyle || hadCodeFence || !codeBlocks.isEmpty
+        hadCodeFence = !codeBlocks.isEmpty
         let affected: NSRange
-        if let changedRange, !pendingFullRestyle {
+        if let changedRange, !needsFullRestyle {
             let start = min(changedRange.location, fullSource.length)
             let length = min(changedRange.length, fullSource.length - start)
             affected = fullSource.lineRange(for: NSRange(location: start, length: length))
@@ -141,12 +147,32 @@ final class MarkdownTextView: NSTextView {
         // Display attributes must not register undo or alter the source text.
         textStorage.beginEditing()
         textStorage.setAttributes(base, range: affected)
+        let headingScales: [CGFloat] = [1.8, 1.5, 1.3, 1.18, 1.1, 1.04]
+        for block in blocks where NSIntersectionRange(block.range, affected).length > 0 {
+            guard case let .heading(level) = block.kind else { continue }
+            let headingFont = NSFontManager.shared.convert(font, toSize: writerFontSize * headingScales[level - 1])
+            textStorage.addAttribute(.font, value: NSFontManager.shared.convert(headingFont, toHaveTrait: .boldFontMask), range: block.content)
+            let headingParagraph = paragraph.mutableCopy() as! NSMutableParagraphStyle
+            headingParagraph.paragraphSpacingBefore = writerFontSize * (level <= 2 ? 0.8 : 0.5)
+            headingParagraph.paragraphSpacing = writerFontSize * 0.35
+            textStorage.addAttribute(.paragraphStyle, value: headingParagraph, range: block.range)
+            for marker in block.markers {
+                textStorage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: marker)
+            }
+        }
+        let inlineCodePattern = try! NSRegularExpression(pattern: #"(?<!`)(`+)([^`\n]+)\1(?!`)"#)
+        let inlineCode = inlineCodePattern.matches(in: source, range: whole).map { absolute($0.range) }
+            .filter { range in !codeBlocks.contains { NSIntersectionRange($0.range, range).length > 0 } }
         for span in MarkdownSpans.inline(in: source) {
+            let content = absolute(span.content)
+            guard !codeBlocks.contains(where: { NSIntersectionRange($0.range, content).length > 0 }),
+                  !inlineCode.contains(where: { NSIntersectionRange($0, content).length > 0 }) else { continue }
+            let contentFont = textStorage.attribute(.font, at: content.location, effectiveRange: nil) as? NSFont ?? font
             switch span.kind {
             case .bold:
-                textStorage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), range: absolute(span.content))
+                textStorage.addAttribute(.font, value: NSFontManager.shared.convert(contentFont, toHaveTrait: .boldFontMask), range: content)
             case .italic:
-                textStorage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask), range: absolute(span.content))
+                textStorage.addAttribute(.font, value: NSFontManager.shared.convert(contentFont, toHaveTrait: .italicFontMask), range: content)
             case .link:
                 textStorage.addAttribute(.foregroundColor, value: NSColor.linkColor, range: absolute(span.content))
                 textStorage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: absolute(span.content))
@@ -155,14 +181,33 @@ final class MarkdownTextView: NSTextView {
                 textStorage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: absolute(marker))
             }
         }
-        let heading = try! NSRegularExpression(pattern: #"(?m)^(#{1,6})\s+(.+)$"#)
-        for match in heading.matches(in: source, range: whole) {
-            textStorage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), range: absolute(match.range(at: 2)))
-            textStorage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: absolute(match.range(at: 1)))
+        let codeFont = NSFont.monospacedSystemFont(ofSize: writerFontSize * 0.9, weight: .regular)
+        let codeColor = NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.95, alpha: 1)
+        }
+        let codeParagraph = paragraph.mutableCopy() as! NSMutableParagraphStyle
+        codeParagraph.lineSpacing = writerFontSize * 0.2
+        codeParagraph.paragraphSpacing = 0
+        for block in codeBlocks {
+            textStorage.addAttributes([
+                .font: codeFont, .foregroundColor: NSColor.textColor,
+                .backgroundColor: codeColor, .mdwriteCodeBackground: codeColor,
+                .mdwriteCodeContinues: block.markers.count == 1,
+                .paragraphStyle: codeParagraph, .underlineStyle: 0
+            ], range: block.range)
+            for marker in block.markers {
+                textStorage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: marker)
+            }
+        }
+        for range in inlineCode {
+            textStorage.addAttributes([.font: codeFont, .foregroundColor: NSColor.textColor,
+                                      .backgroundColor: codeColor, .underlineStyle: 0], range: range)
         }
         textStorage.endEditing()
         typingAttributes = base
         backgroundColor = .textBackgroundColor
         insertionPointColor = .textColor
+        needsDisplay = true
     }
 }

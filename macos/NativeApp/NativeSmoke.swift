@@ -4,7 +4,82 @@ import PDFKit
 
 @MainActor
 enum NativeSmoke {
+    static func runFormatting() throws {
+        let document = MarkdownDocument()
+        document.recoveryStore = nil
+        let source = "# Large\n## Medium\n### Small\n#### Four\n##### Five\n###### Six\nbody\n```swift\n# code\n\n**literal**\n```\n# After\n`**inline**`"
+        document.sourceStorage.setAttributedString(NSAttributedString(string: source))
+        document.makeWindowControllers()
+        defer { document.close() }
+        let editor = document.editorController!.editor
+        editor.restyle()
+        func location(_ text: String) -> Int { (editor.string as NSString).range(of: text).location }
+        func font(_ text: String) -> NSFont {
+            document.sourceStorage.attribute(.font, at: location(text), effectiveRange: nil) as! NSFont
+        }
+        var failures: [String] = []
+        let sizes = ["Large", "Medium", "Small", "Four", "Five", "Six", "body"].map { font($0).pointSize }
+        if !zip(sizes, sizes.dropFirst()).allSatisfy({ $0 > $1 }) {
+            failures.append("heading sizes are not hierarchical: \(sizes)")
+        }
+        if document.sourceStorage.attribute(.backgroundColor, at: location("# code"), effectiveRange: nil) == nil {
+            failures.append("fenced code has no background styling")
+        }
+        if NSFontManager.shared.traits(of: font("literal")).contains(.boldFontMask) {
+            failures.append("Markdown inside a code fence is styled as bold")
+        }
+        if NSFontManager.shared.traits(of: font("# code")).contains(.boldFontMask)
+            || NSFontManager.shared.traits(of: font("inline")).contains(.boldFontMask) {
+            failures.append("code contains heading or inline Markdown formatting")
+        }
+        if font("After").pointSize != sizes[0]
+            || document.sourceStorage.attribute(.backgroundColor, at: location("After"), effectiveRange: nil) != nil {
+            failures.append("closing fence fails to restore heading styling")
+        }
+        if editor.string != source || document.isDocumentEdited {
+            failures.append("styling changes source or dirty state")
+        }
+        // Exercise the actual layout-manager background drawing, not just attributes.
+        document.editorController?.window?.contentView?.layoutSubtreeIfNeeded()
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            editor.appearance = NSAppearance(named: appearance)
+            editor.restyle()
+            let preview = editor.dataWithPDF(inside: editor.bounds)
+            if PDFDocument(data: preview)?.string?.contains("literal") != true {
+                failures.append("styled editor cannot render its heading/code layout in \(appearance.rawValue)")
+            }
+            if CommandLine.arguments.contains("--style-preview") {
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent("mdwrite-style-\(appearance.rawValue)-\(UUID()).pdf")
+                try preview.write(to: url)
+                print("Style preview: \(url.path)")
+            }
+        }
+        editor.appearance = nil
+        editor.setWriterFontSize(24)
+        if abs(font("Large").pointSize / sizes[0] - 1.2) > 0.01 {
+            failures.append("heading size does not follow text-size controls")
+        }
+        let opening = location("```swift")
+        let closing = (editor.string as NSString).range(of: "```\n# After")
+        editor.setSelectedRange(NSRange(location: opening, length: closing.location + 4 - opening))
+        editor.apply(.replace("plain\n"))
+        if document.sourceStorage.attribute(.backgroundColor, at: location("plain"), effectiveRange: nil) != nil
+            || font("After").pointSize <= font("plain").pointSize {
+            failures.append("removing a fence leaves stale code or heading styling")
+        }
+        document.undoManager?.undo()
+        if editor.string != source {
+            failures.append("undo after styling does not restore Markdown source")
+        }
+        if !failures.isEmpty {
+            throw NSError(domain: "mdwrite.style", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: failures.joined(separator: "; ")])
+        }
+        print("PASS: heading hierarchy, fenced-code styling, literal code, and source preservation")
+    }
+
     static func run() throws {
+        try runFormatting()
         func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
             if !condition() {
                 throw NSError(domain: "mdwrite.smoke", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
