@@ -1,67 +1,40 @@
 # mdwrite
 
-A focused Markdown writing app with a native Swift/AppKit macOS application and the original Qt Quick/C++ Linux implementation. Both follow system light/dark appearance.
+A native Markdown editor for macOS, built with Swift and AppKit. Headings, code blocks, quotes, lists, and tables have distinct styling. Text wraps to the window, with system light/dark appearance.
 
-<img width="2948" height="3227" alt="screenshot-2026-06-23_15-24-08" src="https://github.com/user-attachments/assets/4e930c0d-edda-4046-b444-a59eff523329" />
-<img width="2948" height="3227" alt="screenshot-2026-06-23_15-23-23" src="https://github.com/user-attachments/assets/8ced7c26-961b-4ded-b263-84403001a951" />
+## Build and run
 
-
-## Native macOS app
-
-Requires macOS 14 or later and Swift 6 Command Line Tools or Xcode. From this repository:
+Requires macOS 14 or later and Swift 6 through Apple Command Line Tools or Xcode. From the repository root:
 
 ```sh
 ./bin/build-macos
 ./bin/run-macos
 ```
 
-The build produces `build/mdwrite.app`, with native document windows, Open/Save/Save As, undo/redo, a [complete source-formatting toolbox](docs/macos-formatting-toolbox.md), find/replace, draft recovery, external-change protection, and rendered printing. Documents default to [read-only View mode](docs/macos-view-edit-modes.md): press E in the document or click Edit to enable changes; click View to lock it again. Use Command shortcuts on macOS; Command-H hides the app and Control-Command-F enters fullscreen. The toolbar and Format menu share 37 Markdown actions in Edit mode; Command-Option-1–6 apply headings.
+The build creates `build/mdwrite.app`, signed for local development. A notarized release is not available yet.
 
-This is a launchable development app, locally ad-hoc signed with sandbox entitlements. Headings, quotes/lists/tasks, rules, tables, emphasis/links, and code now have native source styling. Enter inserts one line break with contextual continuation. See the [Markdown coverage audit](docs/macos-markdown-coverage.md). Markdown markers remain visible and dimmed; syntax elision, accessibility/performance acceptance, and notarized distribution remain pending. See [native development](macos/README.md) for tests and limitations.
+## Using the editor
 
-## Linux installation
+Documents open in read-only **View mode**. You can select, copy, search, and print. Press **E** in the document or click **Edit** to make changes; click **View** to lock editing again.
 
-Build locally with `./bin/build` and launch `./build/mdwrite`. On Arch Linux,
-`./bin/install` builds and installs the renamed `mdwrite` package. The upstream
-Omarchy release is still distributed as `omawrite`; this repository rename does
-not publish or rename that external package.
+- Use the toolbar or **Format** menu to insert Markdown formatting.
+- **Return** inserts a newline and continues lists or quotes; **Shift-Return** skips continuation.
+- Use **⌘O** to open, **⌘S** to save, **⇧⌘S** to save as, **⌘F** to find, and **⌥⌘F** to find and replace.
 
-## Linux shortcuts
+Save changes explicitly. Unsaved drafts have recovery copies, and external-change checks help prevent overwriting work. Markdown markers such as `**` remain visible and dimmed.
 
-- `Ctrl+S` saves. Unsaved documents use the XDG desktop portal file picker.
-- `Ctrl+Shift+S` saves as.
-- `Ctrl+O` opens a Markdown file through the portal picker.
-- `Ctrl+P` opens the system print dialog.
-- `Ctrl+N` opens a new mdwrite window.
-- `Ctrl+Z`, `Ctrl+Shift+Z`, and `Ctrl+Y` handle undo and redo.
-- `Super+F` toggles fullscreen. Qt maps this key as `Meta+F`.
-- `Ctrl+F` searches the document. Use `Enter` or `Ctrl+G` for the next match and `Shift+Enter` for the previous match.
-- `Ctrl+H` opens find and replace.
-- `Ctrl+B`, `Ctrl+I`, and `Ctrl+K` insert bold, italic, and link Markdown.
-- `Ctrl+?` shows the keyboard shortcut reference.
+## Development
 
-Unsaved drafts are recovered after an abnormal exit. mdwrite also watches open files
-and warns before an external change can replace local work.
+```sh
+./bin/test-macos
+```
 
-Text follows the desktop text size — `omarchy display text size`, or GNOME's
-`text-scaling-factor` — and re-flows without a restart. The default of 12px leaves
-mdwrite at the size it is designed around; larger and smaller sizes scale from there.
+Tests require a logged-in macOS graphical session. See [native development](macos/README.md), [Markdown coverage](docs/macos-markdown-coverage.md), and [performance results](docs/macos-performance-results.md) for details and remaining limitations.
 
-## Linux requirements
+## Linux reference app
 
-- Qt 6: `qt6-base`, `qt6-declarative`, `qt6-quickcontrols2`
-- `xdg-desktop-portal` and a portal backend
+The original Qt 6 implementation remains in `src/`. It requires Qt 6 Base, Declarative, and Quick Controls 2, a C++ compiler, make, Qt 6 qmake, and an XDG desktop portal backend. Build with `./bin/build` and launch `./build/mdwrite`. On Arch Linux, `./bin/install` builds and installs the local package.
 
-The iA Writer Mono font is bundled under the SIL Open Font License 1.1; see
-`fonts/OFL.txt`. The font is copyright Information Architects Inc. and based on
-IBM Plex, copyright IBM Corp.
+## License
 
-## Native macOS migration
-
-The native Swift/AppKit development app is named `mdwrite`. See the
-[migration plan](docs/macos-port-plan.md),
-[agent task list](docs/macos-port-tasks.md), and
-[behavior contract](docs/macos-behavior-contract.md) for completed checks and remaining release gates.
-
-The Qt app retains its internal `omawrite` application name solely for settings
-and crash-recovery compatibility; its display name and executable are `mdwrite`.
+See [LICENSE](LICENSE). The bundled iA Writer Mono font uses the [SIL Open Font License](fonts/OFL.txt).
