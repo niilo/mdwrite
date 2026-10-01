@@ -14,6 +14,10 @@ For each task, the implementer reads the named source and dependent artifacts, w
 
 ## Tasks and acceptance
 
+### Large-document responsiveness — priority follow-up
+
+The [performance plan and P01–P08 task list](macos-performance-plan.md) is implemented through P02–P06: efficient source mapping, bounded background analysis, changed-style application, Return checkpoints, and asynchronous document services. Native parity/lifecycle tests pass. The [runtime report](macos-performance-results.md) records serial 1/10 MiB benchmarks and remaining M02/M09 acceptance limits; use its individual gates rather than treating provisional first-page styling as complete semantic convergence.
+
 ### M00 Rename the existing application
 
 - [x] Implementation: rename Qt build target/project, binary paths, package assets, display strings, and test identifiers to `mdwrite`. Retain the old storage namespace and upstream URL; do not imply the upstream package was republished.

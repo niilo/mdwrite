@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Build an optimized diagnostic from current sources, then bound its runtime."""
+import argparse
+import hashlib
+import platform
+from pathlib import Path
+import subprocess
+import sys
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--file", type=Path, help="read-only UTF-8 input; replay a private copy without logging its path or contents")
+    parser.add_argument("--build-only", action="store_true", help="compile the benchmark without running timing probes")
+    parser.add_argument("--kib", type=int, default=16, help="approximate synthetic fixture size (default: 16)")
+    parser.add_argument("--stages", action="store_true", help="measure analysis and styling instead of typing")
+    font_order = parser.add_mutually_exclusive_group()
+    font_order.add_argument("--fonts-before-app", dest="fonts_before_app", action="store_true", default=True,
+                            help="register/drain fonts before NSApplication, matching production (default)")
+    font_order.add_argument("--fonts-after-app", dest="fonts_before_app", action="store_false",
+                            help="diagnostic ordering: create NSApplication before font registration")
+    parser.add_argument("--no-background-layout", action="store_true", help="diagnostic ablation: disable native idle background layout")
+    parser.add_argument("--services", action="store_true", help="include isolated recovery writes, footer counts, and named-file polling")
+    parser.add_argument("--close-cycles", type=int, default=0, help="additional settled-document open/close memory observations (0–10)")
+    parser.add_argument("--interactive", action="store_true", help="measure sustained native keys, event-loop delay, draw, memory, and eventual styling")
+    parser.add_argument("--fixture", help="reported matches synthetic 4996-line/30558-word counts, independent of --kib", choices=["baseline", "prose", "dense", "fences", "unicode", "longline", "reported"], default="baseline")
+    parser.add_argument("--edits", type=int, default=100, help="measured operations after warm-up (default: 100)")
+    parser.add_argument("--operation", choices=["typing", "return", "delete", "paste", "undo"], default="typing")
+    parser.add_argument("--visible-budget-ms", type=float, help="explicit complete visible semantics budget; default preserves proposed 1000/2000 ms gate")
+    parser.add_argument("--settle-timeout", type=float, default=30, help="seconds allowed for final full styling convergence")
+    parser.add_argument("--repetitions", type=int, default=1)
+    parser.add_argument("--timeout", type=float, default=25, help="seconds allowed per isolated run")
+    args = parser.parse_args()
+    if sys.platform != "darwin":
+        parser.error("requires macOS and a logged-in graphical session")
+    if not 1 <= args.kib <= 10240 or not 1 <= args.repetitions <= 20 or args.timeout <= 0 or not 1 <= args.edits <= 1000 or args.settle_timeout <= 0 or not 0 <= args.close_cycles <= 10:
+        parser.error("use 1–10240 KiB, 1–20 repetitions, 1–1000 edits, and positive timeouts")
+
+    if args.file is not None and (args.fixture != "baseline" or not args.file.is_file()):
+        parser.error("--file requires a readable regular file and cannot be combined with --fixture")
+
+    if args.visible_budget_ms is not None and args.visible_budget_ms <= 0:
+        parser.error("visible budget must be positive")
+    if (args.services or args.close_cycles) and not args.interactive:
+        parser.error("services and close cycles require interactive acceptance")
+    if args.stages and args.interactive:
+        parser.error("choose stage analysis or interactive acceptance, not both")
+
+    root = Path(__file__).resolve().parent.parent
+    core = sorted((root / "macos/EditorCore").glob("*.swift"))
+    native = sorted((root / "macos/NativeApp").glob("Markdown*.swift")) + [
+        root / "macos/NativeApp/EditorWindowController.swift",
+        root / "macos/NativeApp/RecoveryStore.swift",
+        root / "macos/NativeApp/DocumentBackgroundServices.swift",
+        root / "macos/Benchmarks/LargeDocumentBaseline.swift",
+    ]
+    native = [source for source in native if source.exists()]
+    version = subprocess.check_output(["swiftc", "--version"])
+    digest = hashlib.sha256(version + Path(__file__).read_bytes())
+    captured_sources = {source: source.read_bytes() for source in core + native}
+    for source, contents in captured_sources.items():
+        digest.update(str(source.relative_to(root)).encode() + b"\0" + contents)
+    build = root / "build/performance-baseline" / digest.hexdigest()[:16]
+    binary = build / "baseline"
+    if not binary.exists():
+        build.mkdir(parents=True, exist_ok=True)
+        # Compile exactly the bytes hashed above, even if another contributor
+        # edits the working tree while swiftc is compiling the native sources.
+        snapshots = {}
+        for source, contents in captured_sources.items():
+            snapshot = build / "sources" / source.relative_to(root)
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_bytes(contents)
+            snapshots[source] = snapshot
+        common = ["swiftc", "-O", "-swift-version", "6", "-parse-as-library",
+                  "-target", f"{platform.machine()}-apple-macosx14.0",
+                  "-module-cache-path", str(root / "macos/.build/module-cache")]
+        subprocess.run(common + ["-module-name", "EditorCore", "-emit-module", "-emit-library", "-static",
+                                 "-emit-module-path", str(build / "EditorCore.swiftmodule"),
+                                 "-o", str(build / "libEditorCore.a")] + [str(snapshots[source]) for source in core], check=True)
+        subprocess.run(common + ["-I", str(build), "-L", str(build), "-lEditorCore",
+                                 "-o", str(binary)] + [str(snapshots[source]) for source in native], check=True)
+
+    if args.build_only:
+        print(f"benchmark built: {binary}", flush=True)
+        return 0
+
+    print(f"source_build={build.name}", flush=True)
+    print(f"macOS {platform.mac_ver()[0]}, {platform.machine()}, optimized Swift 6 diagnostic", flush=True)
+    failed = False
+    for iteration in range(args.repetitions):
+        print(f"run {iteration + 1}/{args.repetitions}", flush=True)
+        command = [str(binary), str(args.kib), "--fonts", str(root / "fonts")]
+        command += ["--fixture", args.fixture]
+        if args.file is not None:
+            command += ["--file", str(args.file.resolve())]
+        if args.visible_budget_ms is not None:
+            command += ["--visible-budget-ms", str(args.visible_budget_ms)]
+        if args.fonts_before_app:
+            command.append("--fonts-before-app")
+        else:
+            command.append("--fonts-after-app")
+        if args.no_background_layout:
+            command.append("--no-background-layout")
+        if args.services:
+            command.append("--services")
+        if args.close_cycles:
+            command += ["--close-cycles", str(args.close_cycles)]
+        if args.stages:
+            command.append("--stages")
+        if args.interactive:
+            command += ["--interactive", "--edits", str(args.edits), "--operation", args.operation,
+                        "--settle-timeout", str(args.settle_timeout)]
+        try:
+            result = subprocess.run(command, timeout=args.timeout)
+            failed = failed or result.returncode != 0
+        except subprocess.TimeoutExpired:
+            print(f"FAIL: isolated benchmark exceeded {args.timeout:g} seconds", flush=True)
+            failed = True
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

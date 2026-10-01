@@ -83,6 +83,8 @@ The two feasibility gates are intentionally first. Elision must pass Unicode/IME
 
 Performance targets are proposed budgets: deterministic 1 MiB and 10 MiB Markdown fixtures, p95 ordinary keystroke handling below 16 ms on a recorded reference machine, and 10 MiB open below 2 seconds after launch. Measure baseline, memory, and full-layout work in M02, then confirm or revise budgets before treating them as gates. Bounded recomputation and stale-result rejection must prevent typing latency from scaling with every full document scan.
 
+The [large-document responsiveness plan](macos-performance-plan.md) implements efficient source mapping, bounded background analysis/application, Return checkpoints, and asynchronous services. The [runtime results](macos-performance-results.md) record reference-machine latency, semantic convergence, memory, and remaining acceptance limits. Proposed budgets are evaluated independently; provisional first-page styling does not establish complete distant-reference correctness.
+
 Release acceptance requires every parity row to be accepted or explicitly deferred, automated core/document tests passing, manual IME/VoiceOver and visual checks recorded, and a fresh-machine install/open/save/print/recovery smoke test. Signing credentials are required only for release packaging; missing credentials do not block local builds or tests. Do not remove Qt, publish packages, or submit to the App Store as an implicit consequence of a task finishing.
 
 ## Review and unresolved decisions
