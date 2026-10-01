@@ -12,7 +12,26 @@ final class MarkdownTextView: NSTextView {
     var modeDidChange: ((EditorMode) -> Void)?
     private(set) var mode: EditorMode = .view
     var writerFontSize: CGFloat = 20
+    private var coordinator: MarkdownAnalysisCoordinator?
+    private var settingMarkedText = false
+    var returnCache = MarkdownReturnCache()
+    var defersStyling: Bool { settingMarkedText || hasMarkedText() }
+    var stylingIsPending: Bool { coordinator?.isPending ?? false }
+    var pendingAnalysisDescription: String { coordinator?.pendingDescription ?? "none" }
+    var backgroundPhaseMaxima: [String: Double] { coordinator?.backgroundPhaseMaxima ?? [:] }
+    var mainThreadStageMaxima: [String: Double] { coordinator?.mainThreadStageMaxima ?? [:] }
+    var analysisRevision: UInt64 { coordinator?.revision ?? 0 }
+    func stopAnalysis() { coordinator?.shutdown() }
+    func didLoadSource() { coordinator?.didLoadSource() }
 
+    // A delivery seam lets lifecycle checks hold completed work and reproduce
+    // races deterministically. Production delivers immediately on the main actor.
+    func configureAnalysisDelivery(_ delivery: @escaping @MainActor (MarkdownAnalysisPhase, @escaping @MainActor () -> Void) -> Void) {
+        guard let textStorage else { return }
+        coordinator?.shutdown()
+        coordinator = MarkdownAnalysisCoordinator(editor: self, storage: textStorage, deliverAnalysis: delivery)
+        coordinator?.request()
+    }
     func setMode(_ next: EditorMode) {
         guard mode != next || isEditable != (next == .edit) else { return }
         // Finish an existing composition before locking subsequent input.
@@ -60,6 +79,8 @@ final class MarkdownTextView: NSTextView {
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         guard mode == .edit else { return }
+        settingMarkedText = true
+        defer { settingMarkedText = false }
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
     }
 
@@ -136,7 +157,7 @@ final class MarkdownTextView: NSTextView {
     func apply(_ command: EditorCommand) {
         guard mode == .edit, !hasMarkedText() else { return }
         do {
-            if let edit = try EditorBehavior.edit(command, in: string, selection: selectedRange()) {
+            if let edit = try EditorBehavior.edit(command, in: string, selection: selectedRange(), returnCache: &returnCache) {
                 let name: String
                 switch command {
                 case .bold: name = "Bold"
@@ -157,7 +178,7 @@ final class MarkdownTextView: NSTextView {
     func apply(_ edit: SourceEdit, name: String) {
         guard mode == .edit, !hasMarkedText(), let textStorage else { return }
         do {
-            _ = try edit.applying(to: string)
+            try edit.validate(in: textStorage.string as NSString)
             guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
             undoManager?.beginUndoGrouping()
             textStorage.replaceCharacters(in: edit.range, with: edit.replacement)
@@ -211,7 +232,8 @@ final class MarkdownTextView: NSTextView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        restyle()
+        if let coordinator { coordinator.invalidatePresentation() }
+        else { restyle() }
     }
 
     override func unmarkText() {
@@ -220,10 +242,8 @@ final class MarkdownTextView: NSTextView {
     }
 
     func restyle() {
-        guard let textStorage, !hasMarkedText() else { return }
-        typingAttributes = MarkdownStyler.apply(to: textStorage, fontSize: writerFontSize)
-        backgroundColor = .textBackgroundColor
-        insertionPointColor = .textColor
-        needsDisplay = true
+        guard let textStorage else { return }
+        if coordinator == nil { coordinator = MarkdownAnalysisCoordinator(editor: self, storage: textStorage) }
+        coordinator?.request()
     }
 }

@@ -10,11 +10,19 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
     private let modeControl = NSSegmentedControl(labels: ["View", "Edit"], trackingMode: .selectOne, target: nil, action: nil)
     private weak var formatControl: NSPopUpButton?
     private var footerTimer: Timer?
+    private var countTask: Task<Void, Never>?
+    private var countRevision: UInt64 = 0
+    private var countRequested = false
+    private var servicesStopped = false
     private weak var markdownDocument: MarkdownDocument?
 
     init(document: MarkdownDocument) {
         markdownDocument = document
+        // Establish one base run before attaching layout; semantic decoration is asynchronous.
+        document.sourceStorage.setAttributes(MarkdownStyler.baseAttributes(fontSize: 20),
+                                             range: NSRange(location: 0, length: document.sourceStorage.length))
         let manager = MarkdownLayoutManager()
+        manager.allowsNonContiguousLayout = true
         let container = NSTextContainer(size: NSSize(width: 780, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = true
         document.sourceStorage.addLayoutManager(manager)
@@ -188,15 +196,42 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
     func textDidChange(_ notification: Notification) { scheduleFooter() }
 
     func scheduleFooter() {
-        footerTimer?.invalidate()
+        guard !servicesStopped else { return }
+        countRevision &+= 1
+        if countTask != nil { countRequested = true; return }
+        guard footerTimer == nil else { return }
         footerTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshFooter() }
+            MainActor.assumeIsolated {
+                self?.footerTimer = nil
+                self?.refreshFooter()
+            }
         }
     }
 
     func refreshFooter() {
-        let count = EditorBehavior.wordCount(editor.string)
-        countLabel.stringValue = "\(count) \(count == 1 ? "word" : "words")"
+        guard !servicesStopped else { return }
+        if countTask != nil { countRequested = true; return }
+        let revision = countRevision
+        let snapshot = editor.string
+        countTask = Task { [weak self] in
+            let count = await DocumentBackgroundServices.wordCount(snapshot: snapshot)
+            guard let self else { return }
+            self.countTask = nil
+            if !self.servicesStopped, self.countRevision == revision {
+                self.countLabel.stringValue = "\(count) \(count == 1 ? "word" : "words")"
+            }
+            if self.countRequested {
+                self.countRequested = false
+                self.scheduleFooter()
+            }
+        }
+    }
+
+    func stopServices() {
+        servicesStopped = true
+        countRevision &+= 1
+        footerTimer?.invalidate(); footerTimer = nil
+        countTask?.cancel()
     }
 
     func showStatus(_ text: String) { statusLabel.stringValue = text }

@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MarkdownDocument: NSDocument {
-    let sourceStorage = NSTextStorage()
+    let sourceStorage = MarkdownTextStorage()
     var encoding = try! MarkdownEncoding(data: Data())
     var baseline: Data?
     var baselineURL: URL?
@@ -17,6 +17,20 @@ final class MarkdownDocument: NSDocument {
     private var observedMissingFile = false
     private var conflictIsShown = false
     private var isLoading = false
+    private var isClosed = false
+    private var serviceEpoch: UInt64 = 0
+    private var sourceRevision: UInt64 = 0
+    private let recoveryWriter = DocumentRecoveryWriter()
+    private var externalRead: Task<Void, Never>?
+    private var observationRequested = false
+
+    func flushRecovery() async { await recoveryWriter.flush() }
+
+    private func clearRecovery(_ message: String = "Recovery cleanup failed") {
+        recoveryWriter.invalidate(remove: recoveryID, store: recoveryStore) { [weak self] result in
+            if case let .failure(error) = result { self?.editorController?.showStatus("\(message): \(error.localizedDescription)") }
+        }
+    }
 
     override init() {
         super.init()
@@ -49,12 +63,18 @@ final class MarkdownDocument: NSDocument {
                 NSLocalizedRecoverySuggestionErrorKey: "Open a UTF-8 text file. The original file has not been changed."
             ])
         }
+        serviceEpoch &+= 1
+        sourceRevision &+= 1
+        recoveryTimer?.invalidate(); recoveryTimer = nil
+        clearRecovery()
         isLoading = true
         sourceStorage.setAttributedString(NSAttributedString(string: decoded.text))
         encoding = decoded
         baseline = data
         isLoading = false
+        editorController?.editor.didLoadSource()
         editorController?.editor.restyle()
+        editorController?.scheduleFooter()
     }
 
     nonisolated override func read(from url: URL, ofType typeName: String) throws {
@@ -105,8 +125,8 @@ final class MarkdownDocument: NSDocument {
             encoding = try MarkdownEncoding(data: snapshot)
             observedExternalData = nil
             observedMissingFile = false
-            do { try recoveryStore?.remove(recoveryID) }
-            catch { editorController?.showStatus("Saved; recovery cleanup failed: \(error.localizedDescription)") }
+            serviceEpoch &+= 1
+            clearRecovery("Saved; recovery cleanup failed")
         }
     }
 
@@ -127,38 +147,59 @@ final class MarkdownDocument: NSDocument {
     }
 
     func sourceChanged() {
-        guard !isLoading else { return }
-        // NSDocument observes the document undo manager; do not double-count edits here.
+        guard !isLoading, !isClosed else { return }
+        sourceRevision &+= 1
+        // NSDocument observes undo; never duplicate native dirty tracking.
         editorController?.scheduleFooter()
-        recoveryTimer?.invalidate()
-        recoveryTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.writeRecovery() }
+        // Bounded freshness even during continuous typing, rather than an
+        // indefinitely postponed trailing debounce.
+        if recoveryTimer == nil {
+            recoveryTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.recoveryTimer = nil
+                    self?.writeRecovery()
+                }
+            }
         }
     }
 
     func writeRecovery() {
-        guard isDocumentEdited else {
-            do { try recoveryStore?.remove(recoveryID) }
-            catch { editorController?.showStatus("Recovery cleanup failed: \(error.localizedDescription)") }
-            return
-        }
+        guard !isClosed else { return }
+        guard isDocumentEdited else { clearRecovery(); return }
+        guard let recoveryStore else { return }
+        let token = recoveryWriter.token(revision: sourceRevision)
         let record = RecoveryRecord(version: 1, id: recoveryID, text: sourceStorage.string,
                                     sourceURL: fileURL, sourceBaseline: baseline, updated: Date())
-        do { try recoveryStore?.write(record) }
-        catch { editorController?.showStatus("Recovery could not be saved: \(error.localizedDescription)") }
+        recoveryWriter.write(record, store: recoveryStore, token: token) { [weak self] result in
+            if case let .failure(error) = result {
+                self?.editorController?.showStatus("Recovery could not be saved: \(error.localizedDescription)")
+            }
+        }
     }
 
     func restore(_ record: RecoveryRecord) {
+        serviceEpoch &+= 1
+        sourceRevision &+= 1
+        recoveryTimer?.invalidate(); recoveryTimer = nil
+        clearRecovery()
         recoveryID = record.id
         sourceStorage.setAttributedString(NSAttributedString(string: record.text))
         // Recover as an untitled copy; stale or inaccessible source URLs cannot be overwritten.
         updateChangeCount(.changeDone)
+        editorController?.editor.didLoadSource()
+        editorController?.editor.restyle()
+        editorController?.scheduleFooter()
     }
 
     override func close() {
-        recoveryTimer?.invalidate()
-        observationTimer?.invalidate()
-        try? recoveryStore?.remove(recoveryID)
+        isClosed = true
+        serviceEpoch &+= 1
+        recoveryTimer?.invalidate(); recoveryTimer = nil
+        observationTimer?.invalidate(); observationTimer = nil
+        externalRead?.cancel()
+        recoveryWriter.close(remove: recoveryID, store: recoveryStore)
+        editorController?.editor.stopAnalysis()
+        editorController?.stopServices()
         super.close()
     }
 
@@ -172,8 +213,25 @@ final class MarkdownDocument: NSDocument {
     }
 
     func checkExternalChange() {
-        guard let url = baselineURL, let baseline, !conflictIsShown else { return }
-        let disk = try? Data(contentsOf: url)
+        guard !isClosed, let url = baselineURL, baseline != nil, !conflictIsShown else { return }
+        if externalRead != nil { observationRequested = true; return }
+        let epoch = serviceEpoch
+        externalRead = Task { [weak self] in
+            let result = await DocumentBackgroundServices.read(url: url)
+            guard let self else { return }
+            self.externalRead = nil
+            if !self.isClosed, self.serviceEpoch == epoch, self.baselineURL == url {
+                self.handleExternalChange(result.data)
+            }
+            if self.observationRequested {
+                self.observationRequested = false
+                self.checkExternalChange()
+            }
+        }
+    }
+
+    private func handleExternalChange(_ disk: Data?) {
+        guard let baseline, !isClosed, !conflictIsShown else { return }
         guard disk != baseline else {
             observedExternalData = nil
             observedMissingFile = false
@@ -191,15 +249,22 @@ final class MarkdownDocument: NSDocument {
         alert.informativeText = "Your text is preserved. Reload uses the version on disk; keep your text and use Save As to create a copy."
         alert.addButton(withTitle: "Keep My Text")
         alert.addButton(withTitle: "Reload")
+        let conflictEpoch = serviceEpoch
+        let conflictURL = baselineURL
+        let documentURL = fileURL
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             self.conflictIsShown = false
+            // A sheet response may arrive after Save As, another load, or close.
+            // Its captured disk version belongs only to the original document.
+            guard !self.isClosed, self.serviceEpoch == conflictEpoch,
+                  self.baselineURL == conflictURL, self.fileURL == documentURL else { return }
             if response == .alertSecondButtonReturn, let disk {
                 do {
                     try self.read(from: disk, ofType: "net.daringfireball.markdown")
                     self.undoManager?.removeAllActions()
                     self.updateChangeCount(.changeCleared)
-                    try self.recoveryStore?.remove(self.recoveryID)
+                    self.clearRecovery()
                     self.editorController?.refreshFooter()
                 } catch { self.presentError(error) }
             } else {

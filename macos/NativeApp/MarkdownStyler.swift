@@ -215,6 +215,87 @@ enum MarkdownStyler {
         return base
     }
 
+    static func baseAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+        let font = NSFont(name: "iAWriterMonoS-Regular", size: fontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = fontSize * 0.25
+        return [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph]
+    }
+
+    static func attributes(for style: MarkdownStyle, fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+        var font = style.font.family == .code
+            ? NSFont.monospacedSystemFont(ofSize: style.font.size * fontSize, weight: .regular)
+            : (NSFont(name: "iAWriterMonoS-Regular", size: style.font.size * fontSize)
+                ?? NSFont.monospacedSystemFont(ofSize: style.font.size * fontSize, weight: .regular))
+        if style.font.traits & 1 != 0 { font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
+        if style.font.traits & 2 != 0 { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = style.paragraph.lineSpacing * fontSize
+        paragraph.paragraphSpacing = style.paragraph.paragraphSpacing * fontSize
+        paragraph.paragraphSpacingBefore = style.paragraph.paragraphSpacingBefore * fontSize
+        paragraph.headIndent = style.paragraph.headIndent
+        paragraph.firstLineHeadIndent = style.paragraph.firstLineHeadIndent
+        var result: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color(style.color), .paragraphStyle: paragraph]
+        if let value = style.background { result[.backgroundColor] = color(value) }
+        if let value = style.tableBackground { result[.mdwriteTableBackground] = color(value) }
+        if let value = style.codeBackground { result[.mdwriteCodeBackground] = color(value) }
+        if let value = style.quoteDepth { result[.mdwriteQuoteDepth] = value }
+        if let value = style.rule { result[.mdwriteRule] = value }
+        if let value = style.codeContinues { result[.mdwriteCodeContinues] = value }
+        if let value = style.underline { result[.underlineStyle] = value }
+        if let value = style.strikethrough { result[.strikethroughStyle] = value }
+        return result
+    }
+
+    private static let codeColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.95, alpha: 1)
+    }
+    private static let tableColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.14, alpha: 1) : NSColor(white: 0.97, alpha: 1)
+    }
+    private static func color(_ color: StyleColor) -> NSColor {
+        switch color {
+        case .text: return .textColor
+        case .secondary: return .secondaryLabelColor
+        case .tertiary: return .tertiaryLabelColor
+        case .link: return .linkColor
+        case .code: return codeColor
+        case .table: return tableColor
+        case .hardBreak: return NSColor.separatorColor.withAlphaComponent(0.15)
+        }
+    }
+
+    static let ownedKeys: [NSAttributedString.Key] = [
+        .font, .foregroundColor, .paragraphStyle, .backgroundColor, .underlineStyle, .strikethroughStyle,
+        .mdwriteTableBackground, .mdwriteCodeBackground, .mdwriteQuoteDepth, .mdwriteRule, .mdwriteCodeContinues
+    ]
+    static func applyChanged(_ desired: [NSAttributedString.Key: Any], to storage: NSTextStorage, range: NSRange) {
+        var changes: [(NSRange, [NSAttributedString.Key: Any], [NSAttributedString.Key])] = []
+        let text = storage.string as NSString
+        storage.enumerateAttributes(in: range) { current, part, _ in
+            var additions: [NSAttributedString.Key: Any] = [:]
+            var removals: [NSAttributedString.Key] = []
+            for key in ownedKeys {
+                if let wanted = desired[key] as? NSObject {
+                    if (current[key] as? NSObject)?.isEqual(wanted) != true { additions[key] = wanted }
+                } else if current[key] != nil { removals.append(key) }
+            }
+            // Paragraph geometry belongs to the complete paragraph even when
+            // font/color differences divide it into several canonical runs.
+            if let paragraph = additions.removeValue(forKey: .paragraphStyle) {
+                changes.append((text.paragraphRange(for: part), [.paragraphStyle: paragraph], []))
+            }
+            if !additions.isEmpty || !removals.isEmpty { changes.append((part, additions, removals)) }
+        }
+        for (part, additions, removals) in changes {
+            for key in removals { storage.removeAttribute(key, range: part) }
+            if !additions.isEmpty { storage.addAttributes(additions, range: part) }
+        }
+    }
+
     private static func matches(_ pattern: String, in source: String) -> [NSTextCheckingResult] {
         let regex: NSRegularExpression
         if let cached = regexCache[pattern] { regex = cached }

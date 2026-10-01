@@ -9,7 +9,7 @@ struct RecoveryRecord: Codable, Sendable {
     let updated: Date
 }
 
-struct RecoveryStore {
+struct RecoveryStore: Sendable {
     let directory: URL
 
     static func applicationStore() throws -> RecoveryStore {

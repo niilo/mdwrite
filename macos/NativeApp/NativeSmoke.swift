@@ -85,6 +85,7 @@ enum NativeSmoke {
         try NativeFormatChecks.run()
         try NativeLayoutChecks.run()
         try NativeModeChecks.run()
+        try NativePerformanceChecks.run()
         func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
             if !condition() {
                 throw NSError(domain: "mdwrite.smoke", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
@@ -120,13 +121,16 @@ enum NativeSmoke {
         document.undoManager?.redo()
         try check(document.isDocumentEdited, "redo sets dirty state")
         document.writeRecovery()
+        try NativeAsyncWait.run { await document.flushRecovery() }
         document.undoManager?.undo()
         try check(!document.isDocumentEdited, "undo after recovery returns to clean")
         document.writeRecovery()
+        try NativeAsyncWait.run { await document.flushRecovery() }
         let cleanedRecords = try document.recoveryStore!.records()
         try check(cleanedRecords.isEmpty, "undo to clean removes stale recovery")
         document.undoManager?.redo()
         document.writeRecovery()
+        try NativeAsyncWait.run { await document.flushRecovery() }
         let records = try document.recoveryStore!.records()
         try check(records.count == 1 && records[0].text.contains("**hello**"), "dirty source recovery persists")
         let recovered = MarkdownDocument()

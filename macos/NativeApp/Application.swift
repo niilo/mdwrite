@@ -20,7 +20,48 @@ final class MarkdownDocumentController: NSDocumentController {
 
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
-    let documents = MarkdownDocumentController()
+    let documents: MarkdownDocumentController
+    private let terminationReply: @MainActor (Bool) -> Void
+    private var terminatingDocuments: [MarkdownDocument] = []
+    private var terminationInProgress = false
+
+    init(documents: MarkdownDocumentController = MarkdownDocumentController(),
+         terminationReply: @escaping @MainActor (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }) {
+        self.documents = documents
+        self.terminationReply = terminationReply
+        super.init()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationInProgress else { return .terminateLater }
+        terminationInProgress = true
+        terminatingDocuments = documents.documents.compactMap { $0 as? MarkdownDocument }
+        // Let native Save/Discard/Cancel complete, then drain journal cleanup.
+        // Dispatch ensures a synchronous close callback cannot reply before
+        // NSApplication has received terminateLater.
+        DispatchQueue.main.async { [self] in
+            documents.closeAllDocuments(withDelegate: self,
+                didCloseAllSelector: #selector(didCloseAll(_:didCloseAll:contextInfo:)), contextInfo: nil)
+        }
+        return .terminateLater
+    }
+
+    @objc private func didCloseAll(_ controller: NSDocumentController, didCloseAll: Bool,
+                                   contextInfo: UnsafeMutableRawPointer?) {
+        guard didCloseAll else {
+            terminatingDocuments.removeAll()
+            terminationInProgress = false
+            terminationReply(false)
+            return
+        }
+        Task { @MainActor [self] in
+            for document in terminatingDocuments { await document.flushRecovery() }
+            await DocumentRecoveryWriter.flushCommands()
+            terminatingDocuments.removeAll()
+            terminationInProgress = false
+            terminationReply(true)
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -132,21 +173,36 @@ func installMenus(delegate: ApplicationDelegate) {
 @MainActor
 struct MDWriteApplication {
     static func main() {
-        let app = NSApplication.shared
+        var registeredFonts = false
         if let resources = Bundle.main.resourceURL {
             for file in ["Regular", "Bold", "Italic", "BoldItalic"] {
                 let url = resources.appendingPathComponent("iAWriterMonoS-\(file).ttf")
                 if FileManager.default.fileExists(atPath: url.path) {
-                    CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+                    registeredFonts = CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) || registeredFonts
                 }
             }
         }
+        if registeredFonts {
+            for face in ["Regular", "Bold", "Italic", "BoldItalic"] {
+                _ = NSFont(name: "iAWriterMonoS-\(face)", size: 20)
+            }
+            // Registration queues native font-set notifications. Drain them
+            // before NSApplication/document creation so they cannot trigger a
+            // whole-document font repair during the first large-file open.
+            let deadline = Date(timeIntervalSinceNow: 0.2)
+            repeat {
+                autoreleasepool { _ = RunLoop.main.run(mode: .default, before: deadline) }
+            } while Date() < deadline
+        }
+        let app = NSApplication.shared
         let delegate = ApplicationDelegate()
         installMenus(delegate: delegate)
-        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") || CommandLine.arguments.contains("--format-test") || CommandLine.arguments.contains("--layout-test") || CommandLine.arguments.contains("--mode-test") {
+        if CommandLine.arguments.contains("--performance-test") || CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--style-test") || CommandLine.arguments.contains("--markdown-test") || CommandLine.arguments.contains("--format-test") || CommandLine.arguments.contains("--layout-test") || CommandLine.arguments.contains("--mode-test") {
             app.setActivationPolicy(.prohibited)
             do {
-                if CommandLine.arguments.contains("--mode-test") {
+                if CommandLine.arguments.contains("--performance-test") {
+                    try NativePerformanceChecks.run()
+                } else if CommandLine.arguments.contains("--mode-test") {
                     try NativeModeChecks.run()
                 } else if CommandLine.arguments.contains("--layout-test") {
                     try NativeLayoutChecks.run()
