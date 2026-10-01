@@ -24,6 +24,26 @@ final class MarkdownTextView: NSTextView {
     func stopAnalysis() { coordinator?.shutdown() }
     func didLoadSource() { coordinator?.didLoadSource() }
 
+    /// Keep viewport queries on the active engine. Accessing `layoutManager`
+    /// on a TextKit 2 editor can permanently switch it to compatibility mode.
+    func visibleSourceRange() -> NSRange {
+        let caret = NSRange(location: selectedRange().location, length: 0)
+        if let manager = textLayoutManager {
+            guard let content = manager.textContentManager,
+                  let range = manager.textViewportLayoutController.viewportRange else { return caret }
+            let start = content.offset(from: content.documentRange.location, to: range.location)
+            let end = content.offset(from: content.documentRange.location, to: range.endLocation)
+            guard start != NSNotFound, end != NSNotFound, start >= 0, end >= start,
+                  end <= (textStorage?.length ?? 0) else { return caret }
+            return NSRange(location: start, length: end - start)
+        }
+        if let manager = layoutManager, let container = textContainer {
+            let glyphs = manager.glyphRange(forBoundingRect: visibleRect, in: container)
+            if glyphs.length > 0 { return manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil) }
+        }
+        return caret
+    }
+
     // A delivery seam lets lifecycle checks hold completed work and reproduce
     // races deterministically. Production delivers immediately on the main actor.
     func configureAnalysisDelivery(_ delivery: @escaping @MainActor (MarkdownAnalysisPhase, @escaping @MainActor () -> Void) -> Void) {

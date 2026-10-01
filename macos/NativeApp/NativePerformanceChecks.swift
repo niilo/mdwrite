@@ -26,6 +26,26 @@ enum NativePerformanceChecks {
         func expect(_ condition: Bool, _ message: String) throws {
             if !condition { throw NSError(domain: "mdwrite.performance", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
         }
+        // A viewport query must not force TextKit 2 into legacy compatibility.
+        let modernStorage = MarkdownTextStorage(string: "# Modern\nBody 👩‍💻\n")
+        modernStorage.setAttributes(MarkdownStyler.baseAttributes(fontSize: 20),
+                                    range: NSRange(location: 0, length: modernStorage.length))
+        let content = NSTextContentStorage()
+        content.textStorage = modernStorage
+        let modern = NSTextLayoutManager()
+        content.addTextLayoutManager(modern)
+        content.primaryTextLayoutManager = modern
+        let modernContainer = NSTextContainer(size: NSSize(width: 600, height: 700))
+        modern.textContainer = modernContainer
+        let modernEditor = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 700),
+                                            textContainer: modernContainer)
+        modernEditor.setSelectedRange(NSRange(location: 3, length: 0))
+        modern.ensureLayout(for: content.documentRange)
+        let modernVisible = modernEditor.visibleSourceRange()
+        try expect(modernEditor.textLayoutManager === modern,
+                   "Viewport query switched the active TextKit 2 engine")
+        try expect(modernVisible.location >= 0 && NSMaxRange(modernVisible) <= modernStorage.length,
+                   "Modern viewport query returned invalid source offsets")
         let fixture = "# Heading 👩‍💻\n\n***both*** ~~deleted~~ [link](https://example.org) `**literal**`\n\n> > quote\n> - [x] done\n\nTitle\n===\n\n| Head | Second |\n| --- | --- |\n| row | value |\n\n```swift\n# literal\n**literal**\n```\n\n    indented\n\n[ref][label]\n\n[label]: https://example.org\n\n---\n\n![image](image.png) &amp; \\*escape* <b>raw</b> [^note]\n\n[^note]: content\n\n"
         // Differential presentation oracle: compare all managed attributes,
         // including dynamic colors, independently of plan segmentation.

@@ -223,11 +223,7 @@ final class MarkdownAnalysisCoordinator: NSObject, @preconcurrency NSTextStorage
         analysisNeeded = false
         applicationTimer?.invalidate(); applicationTimer = nil
         let visibleStarted = ProcessInfo.processInfo.systemUptime
-        var visible = NSRange(location: editor.selectedRange().location, length: 0)
-        if let manager = editor.layoutManager, let container = editor.textContainer {
-            let glyphs = manager.glyphRange(forBoundingRect: editor.visibleRect, in: container)
-            if glyphs.length > 0 { visible = manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil) }
-        }
+        var visible = editor.visibleSourceRange()
         record("visible-glyph-lookup", since: visibleStarted)
         let text = storage.string as NSString
         visible = NSIntersectionRange(text.paragraphRange(for: visible), NSRange(location: 0, length: plan.length))
