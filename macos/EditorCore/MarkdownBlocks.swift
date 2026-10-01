@@ -17,13 +17,22 @@ public enum MarkdownBlocks {
     /// so a shorter or different delimiter cannot close an active code block.
     public static func parse(_ source: String) -> [MarkdownBlock] {
         let text = source as NSString
-        let fencePattern = try! NSRegularExpression(pattern: #"^ {0,3}(`{3,}|~{3,})(.*)$"#)
-        let headingPattern = try! NSRegularExpression(pattern: #"^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+[ \t]*)?$"#)
+        let fencePattern = MarkdownRegex.expression( #"^ {0,3}(`{3,}|~{3,})(.*)$"#)
+        let headingPattern = MarkdownRegex.expression( #"^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+[ \t]*)?$"#)
         var result: [MarkdownBlock] = []
         var fence: (delimiter: Character, count: Int, start: Int, contentStart: Int, marker: NSRange)?
         var offset = 0
         while offset < text.length {
             let lineRange = text.lineRange(for: NSRange(location: offset, length: 0))
+            if fence == nil {
+                var marker = offset
+                let end = NSMaxRange(lineRange)
+                while marker < end && marker - offset < 3 && text.character(at: marker) == 32 { marker += 1 }
+                if marker == end || ![35, 96, 126].contains(text.character(at: marker)) {
+                    offset = end
+                    continue
+                }
+            }
             let line = text.substring(with: lineRange).trimmingCharacters(in: .newlines)
             let lineLength = (line as NSString).length
             let wholeLine = NSRange(location: 0, length: lineLength)

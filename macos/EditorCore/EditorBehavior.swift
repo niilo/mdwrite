@@ -4,8 +4,25 @@ import Foundation
 public enum EditorBehavior {
     public static func edit(_ command: EditorCommand, in source: String,
                             selection: NSRange) throws -> SourceEdit? {
-        let selectedRange = try checkedRange(selection, in: source)
-        let selected = String(source[selectedRange])
+        try edit(command, in: source, selection: selection, returnContext: nil)
+    }
+
+    public static func edit(_ command: EditorCommand, in source: String,
+                            selection: NSRange, returnCache: inout MarkdownReturnCache) throws -> SourceEdit? {
+        try checkedNSRange(selection, in: source as NSString)
+        var context: MarkdownReturnContext.Context?
+        if case .insertReturn(soft: false) = command {
+            context = MarkdownReturnContext.context(in: source as NSString,
+                                                    before: selection.location, cache: &returnCache)
+        }
+        return try edit(command, in: source, selection: selection, returnContext: context)
+    }
+
+    private static func edit(_ command: EditorCommand, in source: String, selection: NSRange,
+                             returnContext: MarkdownReturnContext.Context?) throws -> SourceEdit? {
+        let nsSource = source as NSString
+        try checkedNSRange(selection, in: nsSource)
+        let selected = nsSource.substring(with: selection)
         switch command {
         case .replace(let text):
             return replacing(selection, with: text)
@@ -42,11 +59,11 @@ public enum EditorBehavior {
             return replacing(selection, with: clipboard)
         case .insertReturn(let soft):
             if soft { return replacing(selection, with: "\n") }
-            return smartReturn(in: source, selection: selection)
+            return smartReturn(in: source, selection: selection, context: returnContext)
         case .deleteParagraphBreak:
             guard selection.length == 0, selection.location >= 2 else { return nil }
             let range = NSRange(location: selection.location - 2, length: 2)
-            guard let swiftRange = Range(range, in: source), source[swiftRange] == "\n\n" else { return nil }
+            guard nsSource.substring(with: range) == "\n\n" else { return nil }
             return replacing(range, with: "")
         }
     }
@@ -57,7 +74,8 @@ public enum EditorBehavior {
     }
 
     public static func wordCount(_ text: String) -> Int {
-        matches(#"[\p{L}\p{N}]+(?:['-][\p{L}\p{N}]+)*"#, in: text).count
+        MarkdownRegex.expression(#"[\p{L}\p{N}]+(?:['-][\p{L}\p{N}]+)*"#)
+            .numberOfMatches(in: text, range: NSRange(location: 0, length: (text as NSString).length))
     }
 
     public static func suggestedFilename(_ text: String) -> String {
@@ -99,24 +117,54 @@ public enum EditorBehavior {
         ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "")
     }
 
-    static func checkedRange(_ range: NSRange, in source: String) throws -> Range<String.Index> {
-        let count = source.utf16.count
+    /// Exact native grapheme boundaries without asking Foundation to scan a large
+    /// ASCII buffer from its beginning. ASCII pairs are unconditional grapheme
+    /// boundaries except CRLF; anchors isolate a small, correctly segmented window.
+    public static func composedCharacterRange(at offset: Int, in source: NSString) -> NSRange {
+        precondition(offset >= 0 && offset < source.length)
+        let count = source.length
+        func anchor(_ location: Int) -> Bool {
+            if location == 0 || location == count { return true }
+            let before = source.character(at: location - 1)
+            let after = source.character(at: location)
+            return before < 128 && after < 128 && !(before == 13 && after == 10)
+        }
+        if source.character(at: offset) < 128 && anchor(offset) && anchor(offset + 1) {
+            return NSRange(location: offset, length: 1)
+        }
+        var lower = offset
+        let lowerLimit = max(0, offset - 256)
+        while lower > lowerLimit && !anchor(lower) { lower -= 1 }
+        guard anchor(lower) else { return source.rangeOfComposedCharacterSequence(at: offset) }
+        var upper = offset + 1
+        let upperLimit = min(count, offset + 257)
+        while upper < upperLimit && !anchor(upper) { upper += 1 }
+        guard anchor(upper) else { return source.rangeOfComposedCharacterSequence(at: offset) }
+        let window = source.substring(with: NSRange(location: lower, length: upper - lower)) as NSString
+        let range = window.rangeOfComposedCharacterSequence(at: offset - lower)
+        return NSRange(location: lower + range.location, length: range.length)
+    }
+
+    static func checkedNSRange(_ range: NSRange, in source: NSString) throws {
+        let count = source.length
         guard range.location != NSNotFound, range.location >= 0, range.length >= 0,
-              range.location <= count, range.length <= count - range.location,
-              let swiftRange = Range(range, in: source) else { throw EditorError.invalidRange }
-        // AppKit offsets must not split a composed character or CRLF pair.
-        let nsSource = source as NSString
+              range.location <= count, range.length <= count - range.location else { throw EditorError.invalidRange }
         for offset in [range.location, NSMaxRange(range)] where offset < count {
-            guard nsSource.rangeOfComposedCharacterSequence(at: offset).location == offset else {
+            guard composedCharacterRange(at: offset, in: source).location == offset else {
                 throw EditorError.invalidRange
             }
         }
+    }
+
+    static func checkedRange(_ range: NSRange, in source: String) throws -> Range<String.Index> {
+        try checkedNSRange(range, in: source as NSString)
+        guard let swiftRange = Range(range, in: source) else { throw EditorError.invalidRange }
         return swiftRange
     }
 
     static func matches(_ pattern: String, in source: String) -> [NSTextCheckingResult] {
         // Patterns are internal constants. An invalid pattern is a programmer error.
-        let regex = try! NSRegularExpression(pattern: pattern)
+        let regex = MarkdownRegex.expression(pattern)
         return regex.matches(in: source, range: NSRange(location: 0, length: source.utf16.count))
     }
 
@@ -135,22 +183,18 @@ public enum EditorBehavior {
     }
 
     // Return is computed at the replacement start, independent of selection direction.
-    private static func smartReturn(in source: String, selection: NSRange) -> SourceEdit {
+    private static func smartReturn(in source: String, selection: NSRange,
+                                    context: MarkdownReturnContext.Context?) -> SourceEdit {
         let nsSource = source as NSString
-        let before = nsSource.substring(to: selection.location)
-        let lineStart = (before as NSString).range(of: "\n", options: .backwards).location
-        let start = lineStart == NSNotFound ? 0 : lineStart + 1
+        let currentRange = nsSource.lineRange(for: NSRange(location: selection.location, length: 0))
+        let start = currentRange.location
         let line = nsSource.substring(with: NSRange(location: start, length: selection.location - start))
-        let codeContext = MarkdownSyntax.runs(in: source).first {
-            $0.isCodeBlock && $0.range.location <= selection.location && NSMaxRange($0.range) >= selection.location
-        }
-        let code = MarkdownBlocks.parse(before).contains {
-            $0.kind == .fencedCode && $0.markers.count == 1 && NSMaxRange($0.range) == before.utf16.count
-        } || codeContext != nil
+        let context = context ?? MarkdownReturnContext.context(in: nsSource, before: selection.location)
+        let code = context.inFence || context.indentedCode
         let indentedContinuation = (line.hasPrefix("    ") || line.hasPrefix("\t"))
             && matches(#"^[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+"#, in: line).isEmpty
         if code || indentedContinuation {
-            let inQuote = codeContext?.presentation?.components.contains { $0.kind == .blockQuote } ?? false
+            let inQuote = context.quotedFence || context.quotedIndentedCode
             let quote = inQuote ? matches(#"^[ \t]*(?:>[ \t]?)+"#, in: line).first : nil
             let prefix = quote.map { (line as NSString).substring(with: $0.range) } ?? ""
             let content = (line as NSString).substring(from: prefix.utf16.count)
