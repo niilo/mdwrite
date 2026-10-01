@@ -69,7 +69,26 @@ struct MarkdownStyle: Hashable, Sendable {
         strikethrough = attributes[.strikethroughStyle] as? Int
     }
 }
-struct MarkdownStyleRun: Sendable { let range: NSRange; let style: MarkdownStyle }
+fileprivate final class MarkdownStyleReference: Sendable {
+    let value: MarkdownStyle
+    init(_ value: MarkdownStyle) { self.value = value }
+}
+
+struct MarkdownStyleRun: Sendable {
+    let range: NSRange
+    fileprivate let reference: MarkdownStyleReference
+    var style: MarkdownStyle { reference.value }
+
+    init(range: NSRange, style: MarkdownStyle) {
+        self.range = range
+        reference = MarkdownStyleReference(style)
+    }
+
+    fileprivate init(range: NSRange, reference: MarkdownStyleReference) {
+        self.range = range
+        self.reference = reference
+    }
+}
 struct MarkdownStylePlan: Sendable { let length: Int; let runs: [MarkdownStyleRun]; let wordCount: Int }
 
 private final class StyleRegexCache: @unchecked Sendable {
@@ -491,12 +510,19 @@ enum MarkdownStylePlanBuilder {
             for marker in fence.markers { dim(marker) }
         }
         var styled: [MarkdownStyleRun] = []
+        // Dense documents contain millions of source intervals but comparatively
+        // few canonical styles. Share only immutable descriptor values; source
+        // ranges and style equality retain their existing value semantics.
+        var interned: [MarkdownStyle: MarkdownStyleReference] = [:]
         storage.enumerateAttributes(in: whole) { attributes, range, _ in
             let style = MarkdownStyle(attributes)
             if let last = styled.last, last.style == style, NSMaxRange(last.range) == range.location {
-                styled[styled.count - 1] = MarkdownStyleRun(range: NSUnionRange(last.range, range), style: style)
+                styled[styled.count - 1] = MarkdownStyleRun(range: NSUnionRange(last.range, range), reference: last.reference)
             } else {
-                styled.append(MarkdownStyleRun(range: range, style: style))
+                let reference: MarkdownStyleReference
+                if let existing = interned[style] { reference = existing }
+                else { reference = MarkdownStyleReference(style); interned[style] = reference }
+                styled.append(MarkdownStyleRun(range: range, reference: reference))
             }
         }
         return MarkdownStylePlan(length: text.length, runs: styled, wordCount: analysis.wordCount)
