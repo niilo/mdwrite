@@ -86,10 +86,203 @@ private final class StyleRegexCache: @unchecked Sendable {
     }
 }
 
+/// Builder-owned ordered attribute overlays. Native attributed-string mutation
+/// repeatedly splits dense style runs; this buffer logs writes and resolves their
+/// precedence once, without boxing descriptor values into Objective-C objects.
+/// Mutable paragraph objects remain local until immutable styles are extracted.
+private final class MarkdownStyleBuffer {
+    private enum Value { case assigned(Any), removed }
+    private struct Write {
+        let key: NSAttributedString.Key
+        let value: Value
+        let range: NSRange
+    }
+    private struct Event { let offset: Int; let index: Int; let starts: Bool }
+    private struct Node {
+        let index: Int
+        let priority: UInt64
+        var left: Int? = nil
+        var right: Int? = nil
+        var maxEnd: Int
+        var maxSequence: Int
+    }
+    private struct Heap {
+        var values: [Int] = []
+        mutating func push(_ value: Int) {
+            values.append(value)
+            var index = values.count - 1
+            while index > 0 {
+                let parent = (index - 1) / 2
+                if values[parent] >= values[index] { break }
+                values.swapAt(parent, index); index = parent
+            }
+        }
+        mutating func pop() {
+            guard !values.isEmpty else { return }
+            if values.count == 1 { values.removeLast(); return }
+            values[0] = values.removeLast()
+            var index = 0
+            while index * 2 + 1 < values.count {
+                let left = index * 2 + 1, right = left + 1
+                let child = right < values.count && values[right] > values[left] ? right : left
+                if values[index] >= values[child] { break }
+                values.swapAt(index, child); index = child
+            }
+        }
+    }
+    private let length: Int
+    private var writes: [Write] = []
+    private var perKey: [NSAttributedString.Key: [Int]] = [:]
+    private var roots: [NSAttributedString.Key: Int] = [:]
+    private var indexedKeys: Set<NSAttributedString.Key> = []
+    private var nodes: [Node] = []
+
+    init(string: String) { length = (string as NSString).length }
+    func beginEditing() {}
+    func endEditing() {}
+
+    func setAttributes(_ attributes: [NSAttributedString.Key: Any], range: NSRange) {
+        for key in perKey.keys where attributes[key] == nil { append(key, value: .removed, range: range) }
+        addAttributes(attributes, range: range)
+    }
+    func addAttributes(_ attributes: [NSAttributedString.Key: Any], range: NSRange) {
+        for (key, value) in attributes { addAttribute(key, value: value, range: range) }
+    }
+    func addAttribute(_ key: NSAttributedString.Key, value: Any, range: NSRange) {
+        append(key, value: .assigned(value), range: range)
+    }
+    private func append(_ key: NSAttributedString.Key, value: Value, range: NSRange) {
+        precondition(range.location >= 0 && NSMaxRange(range) <= length)
+        guard range.length > 0 else { return }
+        let index = writes.count
+        writes.append(Write(key: key, value: value, range: range))
+        perKey[key, default: []].append(index)
+        if indexedKeys.contains(key) { roots[key] = insert(index, into: roots[key]) }
+    }
+
+    func value(for key: NSAttributedString.Key, at location: Int) -> Any? {
+        precondition(location >= 0 && location < length)
+        if !indexedKeys.contains(key) {
+            indexedKeys.insert(key)
+            for index in perKey[key] ?? [] { roots[key] = insert(index, into: roots[key]) }
+        }
+        var best = -1
+        query(roots[key], at: location, best: &best)
+        guard best >= 0 else { return nil }
+        if case let .assigned(value) = writes[best].value { return value }
+        return nil
+    }
+
+    private func refresh(_ node: Int) {
+        let left = nodes[node].left, right = nodes[node].right, index = nodes[node].index
+        nodes[node].maxEnd = max(NSMaxRange(writes[index].range), max(left.map { nodes[$0].maxEnd } ?? 0,
+                                                                   right.map { nodes[$0].maxEnd } ?? 0))
+        nodes[node].maxSequence = max(index, max(left.map { nodes[$0].maxSequence } ?? -1,
+                                                 right.map { nodes[$0].maxSequence } ?? -1))
+    }
+    private func before(_ a: Int, _ b: Int) -> Bool {
+        let x = writes[a].range.location, y = writes[b].range.location
+        return x < y || x == y && a < b
+    }
+    private func rotateRight(_ root: Int) -> Int {
+        let next = nodes[root].left!
+        nodes[root].left = nodes[next].right
+        nodes[next].right = root
+        refresh(root); refresh(next)
+        return next
+    }
+    private func rotateLeft(_ root: Int) -> Int {
+        let next = nodes[root].right!
+        nodes[root].right = nodes[next].left
+        nodes[next].left = root
+        refresh(root); refresh(next)
+        return next
+    }
+    private func insert(_ index: Int, into root: Int?) -> Int {
+        guard let root else {
+            // Deterministic SplitMix64 priorities keep source-ordered writes balanced.
+            var priority = UInt64(index) &+ 0x9e3779b97f4a7c15
+            priority = (priority ^ (priority >> 30)) &* 0xbf58476d1ce4e5b9
+            priority = (priority ^ (priority >> 27)) &* 0x94d049bb133111eb
+            priority ^= priority >> 31
+            nodes.append(Node(index: index, priority: priority, maxEnd: NSMaxRange(writes[index].range), maxSequence: index))
+            return nodes.count - 1
+        }
+        if before(index, nodes[root].index) {
+            let child = insert(index, into: nodes[root].left)
+            nodes[root].left = child
+            if nodes[child].priority > nodes[root].priority { return rotateRight(root) }
+        } else {
+            let child = insert(index, into: nodes[root].right)
+            nodes[root].right = child
+            if nodes[child].priority > nodes[root].priority { return rotateLeft(root) }
+        }
+        refresh(root)
+        return root
+    }
+    private func query(_ root: Int?, at location: Int, best: inout Int) {
+        guard let root, nodes[root].maxEnd > location, nodes[root].maxSequence > best else { return }
+        let node = nodes[root], range = writes[node.index].range
+        if range.location > location {
+            query(node.left, at: location, best: &best)
+            return
+        }
+        if NSMaxRange(range) > location { best = max(best, node.index) }
+        let leftSequence = node.left.map { nodes[$0].maxSequence } ?? -1
+        let rightSequence = node.right.map { nodes[$0].maxSequence } ?? -1
+        if leftSequence > rightSequence {
+            query(node.left, at: location, best: &best); query(node.right, at: location, best: &best)
+        } else {
+            query(node.right, at: location, best: &best); query(node.left, at: location, best: &best)
+        }
+    }
+
+    func enumerateAttributes(in range: NSRange, using block: ([NSAttributedString.Key: Any], NSRange, UnsafeMutablePointer<ObjCBool>) -> Void) {
+        precondition(range.location == 0 && range.length == length)
+        guard length > 0 else { return }
+        var events: [Event] = []
+        events.reserveCapacity(writes.count * 2)
+        for (index, write) in writes.enumerated() {
+            events.append(Event(offset: write.range.location, index: index, starts: true))
+            events.append(Event(offset: NSMaxRange(write.range), index: index, starts: false))
+        }
+        events.sort { $0.offset < $1.offset }
+        var heaps: [NSAttributedString.Key: Heap] = [:]
+        var active = [Bool](repeating: false, count: writes.count)
+        var attributes: [NSAttributedString.Key: Any] = [:]
+        var cursor = 0, offset = 0
+        var stop = ObjCBool(false)
+        while cursor < events.count {
+            let edge = events[cursor].offset
+            if edge > offset {
+                block(attributes, NSRange(location: offset, length: edge - offset), &stop)
+                if stop.boolValue { return }
+            }
+            var changed: Set<NSAttributedString.Key> = []
+            while cursor < events.count && events[cursor].offset == edge {
+                let event = events[cursor], key = writes[event.index].key
+                changed.insert(key)
+                active[event.index] = event.starts
+                if event.starts { heaps[key, default: Heap()].push(event.index) }
+                cursor += 1
+            }
+            for key in changed {
+                while let root = heaps[key]?.values.first, !active[root] { heaps[key]?.pop() }
+                if let root = heaps[key]?.values.first, case let .assigned(value) = writes[root].value {
+                    attributes[key] = value
+                } else { attributes.removeValue(forKey: key) }
+            }
+            offset = edge
+        }
+        if offset < length { block(attributes, NSRange(location: offset, length: length - offset), &stop) }
+    }
+}
+
+
 enum MarkdownStylePlanBuilder {
     static func build(_ analysis: MarkdownAnalysis) -> MarkdownStylePlan {
         let source = analysis.source
-        let storage = NSMutableAttributedString(string: source)
+        let storage = MarkdownStyleBuffer(string: source)
         let fontSize: CGFloat = 1
         let text = source as NSString
         let whole = NSRange(location: 0, length: text.length)
@@ -222,7 +415,7 @@ enum MarkdownStylePlanBuilder {
                 func absolute(_ range: NSRange) -> NSRange { NSRange(location: offset + range.location, length: range.length) }
                 if let quote = matches(#"^([ \t]*(?:>[ \t]?)+)"#, in: line).first {
                     dim(absolute(quote.range))
-                    if storage.attribute(.mdwriteQuoteDepth, at: offset, effectiveRange: nil) == nil {
+                    if storage.value(for: .mdwriteQuoteDepth, at: offset) == nil {
                         let depth = (line as NSString).substring(with: quote.range).filter { $0 == ">" }.count
                         let style = paragraph.mutableCopy() as! StyleParagraph
                         style.firstLineHeadIndent = CGFloat(depth) * 24
@@ -232,7 +425,7 @@ enum MarkdownStylePlanBuilder {
                 }
                 if let list = matches(#"^([ \t]*)([-+*]|[0-9]+[.)])[ \t]+(?:\[([ xX])\][ \t]+)?"#, in: line).first {
                     dim(absolute(list.range))
-                    let existing = storage.attribute(.paragraphStyle, at: offset, effectiveRange: nil) as? StyleParagraph
+                    let existing = storage.value(for: .paragraphStyle, at: offset) as? StyleParagraph
                     if existing?.headIndent == 0 {
                         let style = paragraph.mutableCopy() as! StyleParagraph
                         let indentation = (line as NSString).substring(with: list.range(at: 1))
@@ -257,7 +450,7 @@ enum MarkdownStylePlanBuilder {
                     dim(lineRange)
                     storage.addAttribute(.mdwriteRule, value: true, range: lineRange)
                 }
-                if storage.attribute(.mdwriteTableBackground, at: offset, effectiveRange: nil) != nil {
+                if storage.value(for: .mdwriteTableBackground, at: offset) != nil {
                     for pipe in matches(#"(?<!\\)\|"#, in: line) { dim(absolute(pipe.range)) }
                 }
                 if let definition = matches(#"^ {0,3}\[[^\]]+\]:[ \t]*"#, in: line).first { dim(absolute(definition.range)) }
@@ -285,7 +478,7 @@ enum MarkdownStylePlanBuilder {
         let codeParagraph = paragraph.mutableCopy() as! StyleParagraph
         codeParagraph.lineSpacing = fontSize * 0.2
         for range in codeRanges {
-            let existing = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? StyleParagraph
+            let existing = storage.value(for: .paragraphStyle, at: range.location) as? StyleParagraph
             let style = codeParagraph.mutableCopy() as! StyleParagraph
             style.headIndent = existing?.headIndent ?? 0
             style.firstLineHeadIndent = existing?.firstLineHeadIndent ?? 0
@@ -299,7 +492,12 @@ enum MarkdownStylePlanBuilder {
         }
         var styled: [MarkdownStyleRun] = []
         storage.enumerateAttributes(in: whole) { attributes, range, _ in
-            styled.append(MarkdownStyleRun(range: range, style: MarkdownStyle(attributes)))
+            let style = MarkdownStyle(attributes)
+            if let last = styled.last, last.style == style, NSMaxRange(last.range) == range.location {
+                styled[styled.count - 1] = MarkdownStyleRun(range: NSUnionRange(last.range, range), style: style)
+            } else {
+                styled.append(MarkdownStyleRun(range: range, style: style))
+            }
         }
         return MarkdownStylePlan(length: text.length, runs: styled, wordCount: analysis.wordCount)
     }

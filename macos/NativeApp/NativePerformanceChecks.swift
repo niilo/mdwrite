@@ -21,6 +21,7 @@ enum NativeAsyncWait {
 enum NativePerformanceChecks {
     static func run() throws {
         try NativeStorageChecks.run()
+        try NativeStylePlanChecks.run()
         try NativeControlledAnalysisChecks.run()
         func expect(_ condition: Bool, _ message: String) throws {
             if !condition { throw NSError(domain: "mdwrite.performance", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
