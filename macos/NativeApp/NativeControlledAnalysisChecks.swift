@@ -84,6 +84,109 @@ enum NativeControlledAnalysisChecks {
         document.close()
         for (_, work) in closing { work() }
         try expect(editor.string == retained && !editor.stylingIsPending, "held callback resurrected closed analysis")
+
+        let gate = AnalysisCheckpointGate()
+        let cancellationDocument = MarkdownDocument()
+        cancellationDocument.recoveryStore = nil
+        cancellationDocument.sourceStorage.setAttributedString(NSAttributedString(string: source))
+        cancellationDocument.makeWindowControllers()
+        let cancellationEditor = cancellationDocument.editorController!.editor
+        cancellationEditor.setMode(.edit)
+        var cancelledDeliveries: [(MarkdownAnalysisPhase, @MainActor () -> Void)] = []
+        cancellationEditor.configureAnalysisDelivery(afterAnalysis: { gate.checkpoint() },
+                                                     afterWorkerCompletion: { gate.finish() }) { phase, work in
+            cancelledDeliveries.append((phase, work))
+        }
+        defer { gate.release(); cancellationDocument.close() }
+        try waitFor { gate.analysisCount == 1 }
+        cancellationEditor.setSelectedRange(NSRange(location: 2, length: 7))
+        cancellationEditor.apply(.replace("Current"))
+        let currentSource = cancellationEditor.string
+        gate.release()
+        // No obsolete complete delivery is needed to release the cancelled
+        // worker. Its successor must run while result callbacks are still held.
+        do {
+            try waitFor { gate.analysisCount >= 2 && cancelledDeliveries.contains { $0.0 == .complete } }
+        } catch {
+            throw NSError(domain: "mdwrite.analysis-ordering", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Cancelled worker blocked its successor (analyses=\(gate.analysisCount))"])
+        }
+        try expect(!gate.timedOut && cancelledDeliveries.filter { $0.0 == .complete }.count == 1,
+                   "cancelled snapshot built or delivered an obsolete complete style plan")
+        let currentDeliveries = cancelledDeliveries
+        cancelledDeliveries.removeAll()
+        currentDeliveries.first { $0.0 == .complete }!.1()
+        for (phase, work) in currentDeliveries where phase == .preview { work() }
+        try waitFor { !cancellationEditor.stylingIsPending }
+        try expect(cancellationEditor.string == currentSource && currentSource.hasPrefix("# Current\n"),
+                   "cancelled worker changed the latest source")
+        try expect((cancellationDocument.sourceStorage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont)?.pointSize == 36,
+                   "successor analysis did not install current heading styling")
+        cancellationEditor.setSelectedRange(NSRange(location: 2, length: 7))
+        cancellationEditor.apply(.replace("Held"))
+        try waitFor { gate.completionCount >= 3 && cancelledDeliveries.contains { $0.0 == .complete } }
+        let heldFinished = cancelledDeliveries
+        cancelledDeliveries.removeAll()
+        cancellationEditor.setSelectedRange(NSRange(location: 2, length: 4))
+        cancellationEditor.apply(.replace("Latest\n\n```swift\nliteral\n```\n\n"))
+        do {
+            try waitFor { gate.completionCount >= 4 && cancelledDeliveries.contains { $0.0 == .complete } }
+        } catch {
+            throw NSError(domain: "mdwrite.analysis-ordering", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "Finished obsolete delivery blocked its successor"])
+        }
+        let finalDeliveries = cancelledDeliveries
+        cancelledDeliveries.removeAll()
+        // These late callbacks must not clear the newer worker or styling cursor.
+        for (_, work) in heldFinished { work() }
+        for (_, work) in finalDeliveries { work() }
+        try waitFor { !cancellationEditor.stylingIsPending }
+        try expect(cancellationEditor.string.hasPrefix("# Latest\n"),
+                   "finished obsolete result replaced the latest revision")
+        let currentLiteral = (cancellationEditor.string as NSString).range(of: "literal").location
+        try expect(cancellationDocument.sourceStorage.attribute(.mdwriteCodeBackground, at: currentLiteral,
+                                                               effectiveRange: nil) != nil,
+                   "finished obsolete result removed the latest code styling")
         print("PASS: controlled preview/full ordering, composition attributes, presentation, reload, and close")
+    }
+}
+
+/// Only the worker waits. The main actor polls protected state and keeps
+/// delivering events, including the edit that cancels the first snapshot.
+private final class AnalysisCheckpointGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var count = 0
+    private var completions = 0
+    private var released = false
+    private var expired = false
+    var analysisCount: Int {
+        condition.lock(); defer { condition.unlock() }
+        return count
+    }
+    var timedOut: Bool {
+        condition.lock(); defer { condition.unlock() }
+        return expired
+    }
+    var completionCount: Int {
+        condition.lock(); defer { condition.unlock() }
+        return completions
+    }
+    func finish() {
+        condition.lock(); defer { condition.unlock() }
+        completions += 1
+    }
+    func checkpoint() {
+        condition.lock(); defer { condition.unlock() }
+        count += 1
+        guard count == 1 else { return }
+        let deadline = Date(timeIntervalSinceNow: 20)
+        while !released {
+            if !condition.wait(until: deadline) { expired = true; return }
+        }
+    }
+    func release() {
+        condition.lock(); defer { condition.unlock() }
+        released = true
+        condition.broadcast()
     }
 }

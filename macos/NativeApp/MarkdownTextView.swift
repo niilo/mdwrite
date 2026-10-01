@@ -46,10 +46,15 @@ final class MarkdownTextView: NSTextView {
 
     // A delivery seam lets lifecycle checks hold completed work and reproduce
     // races deterministically. Production delivers immediately on the main actor.
-    func configureAnalysisDelivery(_ delivery: @escaping @MainActor (MarkdownAnalysisPhase, @escaping @MainActor () -> Void) -> Void) {
+    func configureAnalysisDelivery(afterAnalysis: @escaping @Sendable () -> Void = {},
+                                   afterWorkerCompletion: @escaping @Sendable () -> Void = {},
+                                   _ delivery: @escaping @MainActor (MarkdownAnalysisPhase, @escaping @MainActor () -> Void) -> Void) {
         guard let textStorage else { return }
         coordinator?.shutdown()
-        coordinator = MarkdownAnalysisCoordinator(editor: self, storage: textStorage, deliverAnalysis: delivery)
+        coordinator = MarkdownAnalysisCoordinator(editor: self, storage: textStorage,
+                                                   afterAnalysis: afterAnalysis,
+                                                   afterWorkerCompletion: afterWorkerCompletion,
+                                                   deliverAnalysis: delivery)
         coordinator?.request()
     }
     func setMode(_ next: EditorMode) {

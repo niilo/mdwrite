@@ -20,12 +20,15 @@ final class MarkdownAnalysisCoordinator: NSObject, @preconcurrency NSTextStorage
     private weak var editor: MarkdownTextView?
     private weak var storage: NSTextStorage?
     private let deliverAnalysis: @MainActor (MarkdownAnalysisPhase, @escaping @MainActor () -> Void) -> Void
+    private let afterAnalysis: @Sendable () -> Void
+    private let afterWorkerCompletion: @Sendable () -> Void
     private(set) var revision: UInt64 = 0
     private var generation: UInt64 = 0
     private var closed = false
     private var workerRunning = false
     private var hasCompletedAnalysis = false
     private var workerOperation: BlockOperation?
+    private var workerSerial: UInt64 = 0
     private var sourceRequestQueued = false
     private var analysisNeeded = false
     private var analysisTimer: Timer?
@@ -65,10 +68,14 @@ final class MarkdownAnalysisCoordinator: NSObject, @preconcurrency NSTextStorage
     }
 
     init(editor: MarkdownTextView, storage: NSTextStorage,
+         afterAnalysis: @escaping @Sendable () -> Void = {},
+         afterWorkerCompletion: @escaping @Sendable () -> Void = {},
          deliverAnalysis: @escaping @MainActor (MarkdownAnalysisPhase, @escaping @MainActor () -> Void) -> Void = { _, work in work() }) {
         self.editor = editor
         self.storage = storage
         self.deliverAnalysis = deliverAnalysis
+        self.afterAnalysis = afterAnalysis
+        self.afterWorkerCompletion = afterWorkerCompletion
         super.init()
         storage.delegate = self
     }
@@ -84,6 +91,16 @@ final class MarkdownAnalysisCoordinator: NSObject, @preconcurrency NSTextStorage
         applicationTimer?.invalidate()
         applicationTimer = nil
         analysisNeeded = true
+        // Foundation parsing itself is not interruptible. Skip later phases
+        // of an obsolete snapshot, without starting another worker alongside it.
+        workerOperation?.cancel()
+        // A completed operation will not run its completion block again.
+        // Drop its held result now; request remains deferred until after editing.
+        if workerOperation?.isFinished == true {
+            workerSerial &+= 1
+            workerRunning = false
+            workerOperation = nil
+        }
         // Never rewrite attributes while storage is delivering a character edit.
         if !sourceRequestQueued {
             sourceRequestQueued = true
@@ -148,8 +165,18 @@ final class MarkdownAnalysisCoordinator: NSObject, @preconcurrency NSTextStorage
         let requestedRevision = revision
         let needsPreview = !hasCompletedAnalysis && storage.length > 131072
         workerRunning = true
+        workerSerial &+= 1
+        let requestedSerial = workerSerial
+        let afterAnalysis = self.afterAnalysis
+        let afterWorkerCompletion = self.afterWorkerCompletion
         analysisNeeded = false
         let operation = BlockOperation()
+        operation.completionBlock = { [weak self, weak operation] in
+            let cancelled = operation?.isCancelled == true
+            afterWorkerCompletion()
+            guard cancelled else { return }
+            Task { @MainActor [weak self] in self?.workerCancelled(serial: requestedSerial) }
+        }
         operation.addExecutionBlock { [weak self, weak operation] in
             guard operation?.isCancelled == false else { return }
             // Make the first page readable without waiting for a multi-megabyte
@@ -181,6 +208,7 @@ final class MarkdownAnalysisCoordinator: NSObject, @preconcurrency NSTextStorage
             let started = ProcessInfo.processInfo.systemUptime
             let result: (MarkdownStylePlan, MarkdownReturnCache, Double, Double)? = autoreleasepool {
                 let analysis = MarkdownAnalysis.analyze(snapshot)
+                afterAnalysis()
                 guard operation?.isCancelled == false else { return nil }
                 let analyzed = ProcessInfo.processInfo.systemUptime
                 let plan = MarkdownStylePlanBuilder.build(analysis)
@@ -193,7 +221,8 @@ final class MarkdownAnalysisCoordinator: NSObject, @preconcurrency NSTextStorage
                 self.deliverAnalysis(.complete) { [weak self] in
                     self?.backgroundPhaseMaxima["analysis"] = max(self?.backgroundPhaseMaxima["analysis"] ?? 0, analysisMilliseconds)
                     self?.backgroundPhaseMaxima["style-plan"] = max(self?.backgroundPhaseMaxima["style-plan"] ?? 0, planMilliseconds)
-                    self?.receive(plan, returnCache: returnCache, revision: requestedRevision)
+                    self?.receive(plan, returnCache: returnCache, revision: requestedRevision,
+                                  serial: requestedSerial)
                 }
             }
         }
@@ -201,7 +230,18 @@ final class MarkdownAnalysisCoordinator: NSObject, @preconcurrency NSTextStorage
         MarkdownWorkers.queue.addOperation(operation)
     }
 
-    private func receive(_ plan: MarkdownStylePlan, returnCache: MarkdownReturnCache, revision requestedRevision: UInt64) {
+    private func workerCancelled(serial: UInt64) {
+        guard serial == workerSerial else { return }
+        // Invalidate delayed result callbacks before releasing this worker.
+        workerSerial &+= 1
+        workerRunning = false
+        workerOperation = nil
+        if !closed && analysisNeeded { request() }
+    }
+
+    private func receive(_ plan: MarkdownStylePlan, returnCache: MarkdownReturnCache,
+                         revision requestedRevision: UInt64, serial requestedSerial: UInt64) {
+        guard requestedSerial == workerSerial else { return }
         workerRunning = false
         workerOperation = nil
         guard !closed else { return }
