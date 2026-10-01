@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Compile the isolated P07 native TextKit A/B probe; do not run timings."""
+from pathlib import Path
+import platform
+import subprocess
+
+root = Path(__file__).resolve().parents[3]
+output = root / "build/textkit-probe"
+output.mkdir(parents=True, exist_ok=True)
+binary = output / "textkit-engine-probe"
+subprocess.run([
+    "swiftc", "-O", "-swift-version", "6", "-parse-as-library",
+    "-target", f"{platform.machine()}-apple-macosx14.0",
+    "-module-cache-path", str(root / "macos/.build/module-cache"),
+    str(root / "macos/NativeApp/MarkdownTextStorage.swift"),
+    str(root / "macos/Spikes/Performance/TextKitEngineProbe.swift"),
+    "-o", str(binary),
+], check=True)
+print(binary)
