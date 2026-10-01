@@ -7,6 +7,7 @@
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>mdwrite</string>
     <key>CFBundleDisplayName</key><string>mdwrite</string>
+    <key>CFBundleIconFile</key><string>mdwrite.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
