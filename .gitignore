@@ -13,3 +13,4 @@ qrc_*.cpp
 Makefile
 /macos/.build/
 /macos/.swiftpm/
+.DS_Store
