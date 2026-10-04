@@ -51,6 +51,99 @@ private let tableFixture = try! String(
     #expect(Set(widths).count == 1, "\(rendered)")
 }
 
+/// A copy of projected rows must address real source. Both the grid and the
+/// stacked projection hid a row's terminator by assuming every line had one;
+/// the last line of the fixture has no trailing newline, so the range ran past
+/// the end of the source and the copy asked for text that was not there.
+private func wholeTableCopy(_ projection: MarkdownTablePresentation.Result,
+                            _ table: Int, in source: String) -> String? {
+    let rows = projection.rowRanges.indices.filter { projection.rowOwner[$0] == table }
+    guard let first = rows.first, let last = rows.last else { return nil }
+    let range = NSRange(location: projection.rowRanges[first].location,
+                        length: NSMaxRange(projection.rowRanges[last]) - projection.rowRanges[first].location)
+    guard let copied = projection.map.sourceRange(coveringPresentation: range) else { return nil }
+    guard copied.location >= 0, NSMaxRange(copied) <= (source as NSString).length else { return nil }
+    return (source as NSString).substring(with: copied)
+}
+
+@Test func everyFixtureTableCopiesBackInsideTheSourceFromEitherLayout() throws {
+    let text = tableFixture as NSString
+    let tables = MarkdownTables.parse(tableFixture)
+    for (index, table) in tables.enumerated() {
+        let expected = text.substring(with: table.range)
+        for (style, projection) in [
+            (MarkdownTableRowStyle.pipes,
+             MarkdownTablePresentation.project(tableFixture, tables: tables, style: .pipes)),
+            (.tabs, MarkdownTablePresentation.project(tableFixture, tables: tables, style: .tabs)),
+            (.pipes, MarkdownTablePresentation.project(tableFixture, tables: tables,
+                                                      stacked: [index], style: .pipes))
+        ] {
+            let copied = try #require(wholeTableCopy(projection, index, in: tableFixture),
+                                      "table \(index) \(style) did not map a whole-table copy to source")
+            // The terminator of the table's last line joins the copy when the
+            // source has one, so it may carry exactly that trailing newline.
+            #expect(copied == expected || copied == expected + "\n",
+                    "table \(index) \(style) copied \(copied.debugDescription)")
+        }
+    }
+}
+
+@Test func aTableWithoutBodyRowsStillRendersWhenStacked() throws {
+    // A stacked table is emitted as header/value pairs. A table with no body has
+    // no pairs, so the stacked projection emitted no row for it and the whole
+    // table disappeared from the presentation.
+    let source = "intro\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n| Name |\n| --- |\n\noutro\n"
+    let parsed = MarkdownTables.parse(source)
+    #expect(parsed.count == 2)
+    #expect(parsed[1].body.isEmpty)
+    let projection = MarkdownTablePresentation.project(source, tables: parsed,
+                                                       stacked: [1], style: .pipes)
+    #expect(projection.text.contains("Name"))
+    #expect(projection.rowOwner == [0, 0, 1])
+    #expect(wholeTableCopy(projection, 1, in: source) == "| Name |\n| --- |\n")
+}
+
+@Test func quotedAndListedTablesKeepTheirPrefixOnEveryCopiedRow() throws {
+    // The block prefix is hidden source. Recording it ahead of the row's opening
+    // pipe put its presentation offset before the row range, so a copy covering
+    // the whole table started after it and the first line lost its `> ` or
+    // bullet. The copied Markdown has to round-trip unchanged.
+    for source in ["> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n\nafter\n",
+                   "- | a | b |\n  | --- | --- |\n  | 1 | 2 |\n\nafter\n",
+                   "  | a | b |\n  | --- | --- |\n  | 1 | 2 |\n\nafter\n"] {
+        let text = source as NSString
+        let tables = try #require(MarkdownTables.parse(source).first)
+        for projection in [
+            MarkdownTablePresentation.project(source, tables: [tables], style: .pipes),
+            MarkdownTablePresentation.project(source, tables: [tables], style: .tabs),
+            MarkdownTablePresentation.project(source, tables: [tables], stacked: [0], style: .pipes)
+        ] {
+            let copied = try #require(wholeTableCopy(projection, 0, in: source))
+            let expected = text.substring(with: tables.range)
+            #expect(copied == expected || copied == expected + "\n",
+                    "copied \(copied.debugDescription)")
+        }
+    }
+}
+
+@Test func aTableAtTheEndOfAFileCopiesBackFromEveryLayout() throws {
+    // No trailing newline exists to hide, and a CRLF table's terminator is two
+    // units rather than one.
+    for source in ["| a | b |\n| --- | --- |\n| 1 | 2 |",
+                   "> | a | b |\n> | --- | --- |\n> | 1 | 2 |",
+                   "| a | b |\r\n| --- | --- |\r\n| 1 | 2 |",
+                   "| a | b |\r\n| --- | --- |\r\n| 1 | 2 |\r\n"] {
+        let tables = try #require(MarkdownTables.parse(source).first)
+        for projection in [
+            MarkdownTablePresentation.project(source, tables: [tables], style: .pipes),
+            MarkdownTablePresentation.project(source, tables: [tables], stacked: [0], style: .pipes)
+        ] {
+            let copied = try #require(wholeTableCopy(projection, 0, in: source))
+            #expect(copied == source, "copied \(copied.debugDescription) from \(source.debugDescription)")
+        }
+    }
+}
+
 @Test func projectionRecordsItsRowStyleInsteadOfInferringItFromPipes() throws {
     let tables = MarkdownTables.parse(tableFixture)
     // A cell may legitimately contain a literal pipe. Inferring the style by

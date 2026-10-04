@@ -401,14 +401,22 @@ public enum MarkdownTablePresentation {
                 appendVerbatim(NSRange(location: cursor, length: table.range.location - cursor))
             }
             let rowStart = rowRanges.count
-            if stacked.contains(index) {
+            // A table with no body rows has nothing to pair up, so the stacked
+            // projection emitted no row for it at all and its content vanished
+            // from View mode. Such a table renders as a plain row instead.
+            if stacked.contains(index), !table.body.isEmpty {
                 // Header/value pairs, blank line between data rows.
                 for (rowIndex, row) in table.allRows.enumerated() {
                     let container = table.containers[safe: rowIndex]
-                    appendHidden(NSRange(location: rowIndex == 0 ? table.range.location
-                                                                   : (container?.prefix.location ?? row.line.location),
-                                         length: (container?.prefix.length ?? 0)
-                                         + row.line.length + 1))
+                    // The row's own newline is hidden source too, but the final
+                    // line of a document need not have one: assuming a terminator
+                    // ran the hidden range past the end of the source, so copying
+                    // the whole table asked for text that was not there.
+                    let start = rowIndex == 0 ? table.range.location
+                                               : (container?.prefix.location ?? row.line.location)
+                    let lineEnd = min(NSMaxRange(text.lineRange(for: NSRange(location: start, length: 0))),
+                                      text.length)
+                    appendHidden(NSRange(location: start, length: max(0, lineEnd - start)))
                 }
                 func label(_ column: Int) -> String {
                     guard column < table.header.cells.count,
@@ -564,11 +572,11 @@ public enum MarkdownTablePresentation {
             }
             let content = NSRange(location: offset, length: contentEnd - offset)
             let row = table.allRows[safe: rowIndex]
-            if let container, container.prefix.length > 0 {
-                appendHidden(NSRange(location: line.location, length: container.prefix.length))
-            }
             // The delimiter row is structural: hide it entirely, newline included.
             if row?.kind == .delimiter {
+                if let container, container.prefix.length > 0 {
+                    appendHidden(NSRange(location: line.location, length: container.prefix.length))
+                }
                 appendHidden(NSRange(location: line.location + (container?.prefix.length ?? 0),
                                      length: lineEnd - line.location - (container?.prefix.length ?? 0)))
                 offset = lineEnd
@@ -580,6 +588,17 @@ public enum MarkdownTablePresentation {
             // A leading pipe opens the row so the grid has a left edge.
             if style == .pipes { appendGenerated("|") }
             let rowStart = outputLength()
+            // A block prefix (`> `, a bullet, plain indent) is source syntax the
+            // presentation hides; the table's own indent is applied instead.
+            //
+            // It is recorded here, after the row's opening pipe, so the hidden
+            // span shares the row's presentation offset. Hiding it first put it
+            // one position ahead of the row range, and a copy covering the whole
+            // table started after it: the first line lost its `> ` or bullet and
+            // pasted as broken Markdown.
+            if let container, container.prefix.length > 0 {
+                appendHidden(NSRange(location: line.location, length: container.prefix.length))
+            }
             if let row {
                 for (column, cell) in row.cells.enumerated() {
                     if column > 0 {
