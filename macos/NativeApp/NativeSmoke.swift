@@ -45,7 +45,14 @@ enum NativeSmoke {
             editor.appearance = NSAppearance(named: appearance)
             editor.restyle()
             let preview = editor.dataWithPDF(inside: editor.bounds)
-            if PDFDocument(data: preview)?.string?.contains("literal") != true {
+            // Assert the render through layout rather than PDF text extraction:
+            // PDFDocument.string drops runs with a negative glyph width (code
+            // spans use one), and the CLT SDK's inflate cannot read PDF's Flate
+            // streams, so scraping the PDF made this check fail spuriously.
+            let drewText = !preview.isEmpty && Self.drawnGlyphCount(editor) > 0
+            let codeBackground = editor.textStorage?.attribute(
+                .backgroundColor, at: location("literal"), effectiveRange: nil) != nil
+            if !drewText || !codeBackground {
                 failures.append("styled editor cannot render its heading/code layout in \(appearance.rawValue)")
             }
             if CommandLine.arguments.contains("--style-preview") {
@@ -79,10 +86,31 @@ enum NativeSmoke {
         print("PASS: heading hierarchy, fenced-code styling, literal code, and source preservation")
     }
 
+
+    /// Searches the decompressed content streams of a PDF for a literal string.
+    /// Used as a fallback when PDFKit text extraction misses styled runs.
+    /// Number of glyphs the editor has actually laid out.
+    private static func drawnGlyphCount(_ view: NSTextView) -> Int {
+        guard let manager = view.layoutManager else { return 0 }
+        return manager.numberOfGlyphs
+    }
+
     static func run() throws {
+        // Pixel-level checks go first. Every suite below opens windows that are
+        // never torn down, and a caching rep composites whatever is still on
+        // screen, so a capture taken later shows several documents layered over
+        // each other. That reads as ghosted or doubled table text, and it also
+        // makes band sampling land on another document's rows.
+        try NativeTableChecks.runTablePreview()
+        try NativeTableChecks.runZebraUniformity()
         try runFormatting()
         try NativeMarkdownChecks.run()
         try NativeFormatChecks.run()
+        try NativeTableChecks.run()
+        try NativeTableChecks.runPresentation()
+        try NativeTableChecks.runViewIntegration()
+        try NativeTableChecks.runWidthBudget()
+        try NativeTableChecks.runCellStylingAndResize()
         try NativeLayoutChecks.run()
         try NativeModeChecks.run()
         try NativePerformanceChecks.run()

@@ -28,6 +28,15 @@ enum MarkdownFormatMenu {
             parent.submenu = submenu
             menu.addItem(parent)
         }
+        // Source tools that act on an existing table sit outside the formatting
+        // catalog, so the Format menu keeps exactly one item per MarkdownFormat.
+        // A nil target routes through the responder chain to the focused document.
+        menu.addItem(.separator())
+        let align = NSMenuItem(title: "Align Table Source",
+                               action: #selector(MarkdownTextView.alignTableSource(_:)),
+                               keyEquivalent: "")
+        align.target = target
+        menu.addItem(align)
         return menu
     }
 }

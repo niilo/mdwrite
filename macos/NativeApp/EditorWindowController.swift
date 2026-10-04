@@ -15,6 +15,11 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
     private var countRequested = false
     private var servicesStopped = false
     private weak var markdownDocument: MarkdownDocument?
+    /// Read-only View-mode projection. Shares the editor's scroll view as an
+    /// alternate document view so scrolling and focus stay native.
+    let presentationView: MarkdownTablePresentationView
+    /// The scroll view that hosts whichever view is currently showing.
+    private(set) weak var editorScroll: NSScrollView?
 
     init(document: MarkdownDocument) {
         markdownDocument = document
@@ -28,6 +33,18 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         document.sourceStorage.addLayoutManager(manager)
         manager.addTextContainer(container)
         editor = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 860, height: 700), textContainer: container)
+        // The presentation view mirrors the editor's configuration so View mode
+        // reads identically once tables are projected.
+        let presentationStorage = NSTextStorage()
+        let presentationManager = MarkdownLayoutManager()
+        presentationManager.allowsNonContiguousLayout = true
+        let presentationContainer = NSTextContainer(
+            size: NSSize(width: 780, height: CGFloat.greatestFiniteMagnitude))
+        presentationContainer.widthTracksTextView = true
+        presentationStorage.addLayoutManager(presentationManager)
+        presentationManager.addTextContainer(presentationContainer)
+        presentationView = MarkdownTablePresentationView(
+            frame: NSRect(x: 0, y: 0, width: 860, height: 700), textContainer: presentationContainer)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
@@ -75,6 +92,34 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         // them at the same width before attachment, including a zero-size clip.
         editor.setFrameSize(NSSize(width: scroll.contentSize.width, height: editor.frame.height))
         scroll.documentView = editor
+        editorScroll = scroll
+        // Resizing must re-evaluate the column layout, or a stacked table never
+        // becomes a grid when the window grows.
+        scroll.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification,
+                                               object: scroll, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleLayoutRefresh() }
+        }
+        // Mirror the source editor's inset so both modes share the same gutters.
+        presentationView.textContainerInset = editor.textContainerInset
+        presentationView.minSize = editor.minSize
+        presentationView.maxSize = editor.maxSize
+        presentationView.autoresizingMask = editor.autoresizingMask
+        presentationView.isVerticallyResizable = true
+        presentationView.isHorizontallyResizable = false
+        presentationView.setFrameSize(NSSize(width: scroll.contentSize.width, height: editor.frame.height))
+        // E over the projection maps the caret back to the same cell's source.
+        presentationView.editRequested = { [weak self] presentationLocation in
+            guard let self else { return }
+            if let offset = self.presentationView.sourceOffset(forPresentation: presentationLocation) {
+                self.editor.setSelectedRange(NSRange(location: min(offset, self.editor.string.utf16.count),
+                                                     length: 0))
+            }
+            self.editor.setMode(.edit)
+            self.updateTablePresentation()
+            self.window?.makeFirstResponder(self.editor)
+            self.editor.scrollRangeToVisible(self.editor.selectedRange())
+        }
         let footer = NSView()
         footer.translatesAutoresizingMaskIntoConstraints = false
         for label in [countLabel, statusLabel, modeLabel] {
@@ -109,7 +154,11 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         editor.restyle()
         refreshFooter()
         refreshModeControls()
-        window.makeFirstResponder(editor)
+        // Documents open in View mode, so project any tables present at load.
+        // Focus only moves to the projection when one is actually installed;
+        // otherwise the source editor keeps first responder for command checks.
+        updateTablePresentation()
+        window.makeFirstResponder(presentationViewInstalled ? presentationView : editor)
     }
 
     required init?(coder: NSCoder) { fatalError("Storyboard initialization is not used") }
@@ -160,17 +209,112 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
 
     @objc func chooseMode(_ sender: NSSegmentedControl) {
         editor.setMode(sender.selectedSegment == 1 ? .edit : .view)
-        window?.makeFirstResponder(editor)
+        updateTablePresentation()
+        window?.makeFirstResponder(presentationViewInstalled ? presentationView : editor)
     }
 
     @objc func enterViewMode(_ sender: Any?) {
         editor.enterViewMode(sender)
+        updateTablePresentation()
+        window?.makeFirstResponder(presentationViewInstalled ? presentationView : editor)
+    }
+
+    /// E and the mode buttons route through here so the source editor regains
+    /// first responder; command checks depend on being in the responder chain.
+    @objc func enterEditMode(_ sender: Any?) {
+        editor.enterEditMode(sender)
+        updateTablePresentation()
         window?.makeFirstResponder(editor)
     }
 
-    @objc func enterEditMode(_ sender: Any?) {
-        editor.enterEditMode(sender)
-        window?.makeFirstResponder(editor)
+    /// True when the read-only projection is the view currently on screen.
+    private(set) var presentationViewInstalled = false
+    /// Usable text width used for the last column-layout decision.
+    private(set) var presentationAvailableWidth: Double = 0
+    /// Scroll width that produced the current layout, and a coalescing flag.
+    private var lastLaidOutWidth: CGFloat = 0
+    private var layoutRefreshScheduled = false
+    /// True when every table in the last projection could use column geometry.
+    var tablesUseColumns: Bool { presentationView.columnsFit }
+
+    /// Install or remove the pipe-free table projection for View mode.
+    ///
+    /// Edit mode always shows `sourceStorage`. The projection is rebuilt from
+    /// the current source each time so a stale snapshot can never be shown.
+    private func updateTablePresentation() {
+        guard let scroll = editorScroll else { return }
+        let source = markdownDocument?.sourceStorage.string ?? ""
+        let tables = MarkdownTables.parse(source)
+        // Usable width is the viewport minus the equal side gutters the editor
+        // already applies, minus a small safety margin.
+        let inset = editor.textContainerInset.width * 2
+        let available = max(120, Double(scroll.contentSize.width) - inset - 8)
+        presentationAvailableWidth = available
+        lastLaidOutWidth = scroll.contentSize.width
+        let advance = MarkdownTableFontMetrics.advance(for: editor.writerFontSize)
+        // Decide per table: a grid when the columns fit the available width,
+        // otherwise stacked header/value pairs so nothing overflows or collapses.
+        var stacked: Set<Int> = []
+        if advance > 0 {
+            for (index, table) in tables.enumerated() {
+                if case .stacked = MarkdownTableLayoutPlanner.layout(
+                    for: table, in: source, available: available, advance: advance) {
+                    stacked.insert(index)
+                }
+            }
+        }
+        let projection = project(source, tables: tables, stacked: stacked)
+        guard editor.mode == .view, !tables.isEmpty,
+              presentationView.install(projection: projection, source: source,
+                                       fontSize: editor.writerFontSize, available: available) else {
+            presentationViewInstalled = false
+            if scroll.documentView !== editor { scroll.documentView = editor }
+            return
+        }
+        presentationViewInstalled = true
+        // Anchor the read position so switching modes does not jump to the top.
+        let length = presentationView.string.utf16.count
+        let caret = min(editor.selectedRange().location, length)
+        let position = presentationView.sourceOffset(forPresentation: caret) ?? 0
+        presentationView.setSelectedRange(NSRange(location: min(position, length), length: 0))
+        if scroll.documentView !== presentationView {
+            scroll.documentView = presentationView
+        }
+        presentationView.textContainerInset = editor.textContainerInset
+    }
+
+    /// Rebuild the projection when the usable width changes.
+    ///
+    /// Resize fires continuously while dragging, so this coalesces onto a short
+    /// delay and compares the width against the last one that was laid out.
+    /// Without this, a stacked table never becomes a grid when the window grows.
+    private func scheduleLayoutRefresh() {
+        guard layoutRefreshScheduled == false else { return }
+        layoutRefreshScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self else { return }
+            self.layoutRefreshScheduled = false
+            let width = self.editorScroll?.contentSize.width ?? 0
+            guard abs(width - self.lastLaidOutWidth) > 1 else { return }
+            self.updateTablePresentation()
+        }
+    }
+
+    /// Source offset for a caret in the presentation, for View -> Edit.
+    private func sourceOffset(forPresentation offset: Int) -> Int? {
+        presentationView.sourceOffset(forPresentation: offset)
+    }
+
+    /// Visible pipes keep columns aligned without relying on tab geometry.
+    private var rowStyle: MarkdownTableRowStyle { .pipes }
+
+    /// Core projection with per-table layout decisions applied.
+    private func project(_ source: String, tables: [MarkdownTable],
+                         stacked: Set<Int>) -> MarkdownTablePresentation.Result {
+        stacked.isEmpty
+            ? MarkdownTablePresentation.project(source, tables: tables, style: rowStyle)
+            : MarkdownTablePresentation.project(source, tables: tables, stacked: stacked,
+                                                 style: rowStyle)
     }
 
     // Keep history commands gated even when a toolbar control has focus.
@@ -178,7 +322,8 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
     @objc func redo(_ sender: Any?) { editor.redo(sender) }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if [#selector(undo(_:)), #selector(redo(_:)), #selector(enterViewMode(_:)), #selector(enterEditMode(_:))]
+        if [#selector(undo(_:)), #selector(redo(_:)), #selector(enterViewMode(_:)), #selector(enterEditMode(_:)),
+            #selector(MarkdownTextView.alignTableSource(_:))]
             .contains(item.action) {
             return editor.validateMenuItem(item)
         }

@@ -170,6 +170,37 @@ final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// True when the caret sits inside a table whose source is not yet aligned.
+    /// Used to enable the menu item without mutating anything.
+    var canAlignTableSource: Bool {
+        guard mode == .edit, !hasMarkedText(), let textStorage else { return false }
+        let source = textStorage.string
+        let caret = selectedRange().location
+        let tables = MarkdownTables.parse(source)
+        guard MarkdownTables.table(containing: caret, in: tables) != nil else { return false }
+        // The action itself is a no-op when the table is already aligned.
+        return (try? MarkdownTableAlignmentEdit.editAligningTable(at: caret, in: source, tables: tables)) != nil
+    }
+
+    /// Explicit, single-step source alignment for the table under the caret.
+    /// Nothing is mutated automatically while typing; undo restores the source.
+    @objc func alignTableSource(_ sender: Any?) {
+        guard mode == .edit, !hasMarkedText(), let textStorage else { return }
+        window?.makeFirstResponder(self)
+        do {
+            let source = textStorage.string
+            guard let edit = try MarkdownTableAlignmentEdit.editAligningTable(
+                at: selectedRange().location, in: source) else {
+                // Not a table, or already aligned: stay silent rather than beep.
+                return
+            }
+            apply(edit, name: "Align Table Source")
+        } catch {
+            NSSound.beep()
+            onCommandError?(error)
+        }
+    }
+
     @objc func increaseTextSize(_ sender: Any?) { setWriterFontSize(writerFontSize + 2) }
     @objc func decreaseTextSize(_ sender: Any?) { setWriterFontSize(writerFontSize - 2) }
     @objc func resetTextSize(_ sender: Any?) { setWriterFontSize(20) }
@@ -232,6 +263,8 @@ final class MarkdownTextView: NSTextView {
             return mode == .edit && !hasMarkedText()
         case #selector(undo(_:)): return mode == .edit && !hasMarkedText() && undoManager?.canUndo == true
         case #selector(redo(_:)): return mode == .edit && !hasMarkedText() && undoManager?.canRedo == true
+        case #selector(alignTableSource(_:)):
+            return canAlignTableSource
         case #selector(enterViewMode(_:)):
             item.state = mode == .view ? .on : .off
             return true

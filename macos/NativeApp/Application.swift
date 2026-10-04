@@ -194,6 +194,9 @@ struct MDWriteApplication {
                 autoreleasepool { _ = RunLoop.main.run(mode: .default, before: deadline) }
             } while Date() < deadline
         }
+        // Table alignment measures with the registered font, so install the
+        // measurer only after font registration has settled.
+        MarkdownTableFontMetrics.install()
         let app = NSApplication.shared
         let delegate = ApplicationDelegate()
         installMenus(delegate: delegate)

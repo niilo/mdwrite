@@ -1,6 +1,54 @@
 import AppKit
 import EditorCore
 
+/// Measures rendered cell width using the real editor font. The bundled
+/// `iAWriterMonoS` has no CJK or emoji glyphs, so those characters resolve to a
+/// fallback face whose advance is fractional; a static table would misalign them.
+enum MarkdownTableFontMetrics {
+    /// Cache keyed by point size; measurement is pure and repeatable.
+    nonisolated(unsafe) private static var advances: [CGFloat: CGFloat] = [:]
+    private static let lock = NSLock()
+
+    static func install() {
+        MarkdownTableWidth.useFontMetrics { text in
+            MainActor.assumeIsolated { cells(in: text) }
+        }
+    }
+
+    /// Width of `text` in whole monospaced cells, rounded to nearest.
+    @MainActor
+    static func cells(in text: String) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let font = bodyFont()
+        let advance = advanceWidth(of: font)
+        guard advance > 0 else { return (text as NSString).length }
+        let measured = (text as NSString).size(withAttributes: [.font: font]).width
+        return max(1, Int((measured / advance).rounded()))
+    }
+
+    @MainActor
+    static func bodyFont(size: CGFloat = 20) -> NSFont {
+        NSFont(name: "iAWriterMonoS-Regular", size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    /// The advance of a single narrow glyph defines one cell.
+    static func advance(for size: CGFloat) -> CGFloat {
+        lock.lock()
+        if let cached = advances[size] { lock.unlock(); return cached }
+        lock.unlock()
+        let width = MainActor.assumeIsolated {
+            ("A" as NSString).size(withAttributes: [.font: bodyFont(size: size)]).width
+        }
+        lock.lock()
+        advances[size] = width
+        lock.unlock()
+        return width
+    }
+
+    private static func advanceWidth(of font: NSFont) -> CGFloat { advance(for: font.pointSize) }
+}
+
 @MainActor
 enum MarkdownStyler {
     private static var regexCache: [String: NSRegularExpression] = [:]

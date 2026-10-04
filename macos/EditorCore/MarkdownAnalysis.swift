@@ -10,6 +10,8 @@ public struct MarkdownAnalysis: Sendable {
     public let codeRanges: [NSRange]
     public let wordCount: Int
     public let returnCache: MarkdownReturnCache
+    /// GFM tables discovered in the same snapshot, for View-mode presentation.
+    public let tables: [MarkdownTable]
 
     public static func analyze(_ source: String) -> MarkdownAnalysis {
         let snapshot = String(decoding: source.utf8, as: UTF8.self)
@@ -28,7 +30,8 @@ public struct MarkdownAnalysis: Sendable {
         return MarkdownAnalysis(source: snapshot, runs: runs, blocks: blocks,
                                 inlineSpans: MarkdownSpans.inline(in: snapshot),
                                 codeRanges: merged, wordCount: EditorBehavior.wordCount(snapshot),
-                                returnCache: MarkdownReturnCache.seeded(in: snapshot))
+                                returnCache: MarkdownReturnCache.seeded(in: snapshot),
+                                tables: MarkdownTables.parse(snapshot))
     }
 }
 
