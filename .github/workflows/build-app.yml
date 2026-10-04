@@ -1,0 +1,78 @@
+name: Build app
+
+# Compiles the macOS app and checks the bundle it produced. This is a build
+# check, not a release: the bundle is ad-hoc signed and is not notarized, so
+# it is uploaded for inspection only. See macos/README.md for what that means.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref makes the in-flight run irrelevant.
+concurrency:
+  group: build-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build macOS app
+    # Pinned rather than macos-latest so the toolchain does not move under a
+    # green run. macOS 26 ships an Xcode new enough for swift-tools-version 6.0;
+    # the package declares a macOS 14 deployment target.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Build the app bundle
+        env:
+          MDWRITE_CONFIGURATION: release
+        run: ./bin/build-macos
+
+      - name: Verify the bundle
+        run: |
+          set -euo pipefail
+          APP=build/mdwrite.app
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          test -x "$APP/Contents/MacOS/mdwrite"
+          plutil -lint "$APP/Contents/Info.plist"
+          # The sandbox entitlement is what makes the ad-hoc signature mean
+          # anything, so check it survived the build rather than assuming.
+          # codesign prints the entitlements already rendered, so match the
+          # output rather than feeding it back through plutil.
+          codesign -d --entitlements - "$APP" 2>/dev/null \
+            | grep -q 'com.apple.security.app-sandbox' \
+            || { echo "sandbox entitlement missing"; exit 1; }
+          # The deployment target has to match Package.swift, or the bundle
+          # claims to run on systems it was never built for.
+          minos=$(otool -l "$APP/Contents/MacOS/mdwrite" \
+            | awk '/LC_BUILD_VERSION/{found=1} found && /minos/{print $2; exit}')
+          echo "minimum macOS: $minos"
+          test -n "$minos"
+
+      # The native smoke suite drives a real AppKit window and needs a logged-in
+      # graphical session, which a hosted runner does not have. It stays a local
+      # check; ./bin/test-macos-core needs no window and is the part CI can run.
+      - name: Package the bundle
+        run: |
+          # ditto preserves the bundle layout, permissions, and code signature.
+          # A plain zip reorders entries and drops metadata, which breaks the
+          # signature the step above just verified.
+          ditto -c -k --sequesterRsrc --keepParent build/mdwrite.app mdwrite-macos.zip
+          ls -lh mdwrite-macos.zip
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: mdwrite-macos
+          path: mdwrite-macos.zip
+          if-no-files-found: error
+          retention-days: 7
