@@ -3,6 +3,80 @@ import EditorCore
 
 @MainActor
 enum NativeModeChecks {
+    /// Edit mode must render the source, including for a document whose editor
+    /// was replaced by the table projection.
+    ///
+    /// Regression: the editor is created at the scroll view's content width, which
+    /// is zero before the window lays out. A document with no tables recovered when
+    /// the clip view first sized itself, but one with tables never did, because the
+    /// projection had already replaced the document view and no further resize
+    /// followed. The editor came back at zero width, and a zero-width view lays out
+    /// no glyphs at all, so Edit mode showed a blank document.
+    static func runEditModeRendersTablesDocument() throws {
+        func expect(_ condition: Bool, _ message: String) throws {
+            if !condition {
+                throw NSError(domain: "mdwrite.mode", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: message])
+            }
+        }
+        // A table is required: without one the projection never replaces the editor
+        // and the bug does not reproduce.
+        let source = """
+        | Command | Description |
+        | --- | --- |
+        | `git status` | List all new or modified files |
+
+        """
+        let document = MarkdownDocument()
+        document.recoveryStore = nil
+        try document.read(from: Data(source.utf8), ofType: "net.daringfireball.markdown")
+        document.makeWindowControllers()
+        defer { document.close() }
+        let controller = document.editorController!
+        let window = controller.window!
+        let editor = controller.editor
+        window.makeKeyAndOrderFront(nil)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        // View mode must have installed the projection; otherwise this proves nothing.
+        try expect(controller.editorScroll?.documentView === controller.presentationView,
+                   "View mode did not install the table projection, so the restore path is untested")
+
+        // Switch to Edit the way a user does, through the mode control.
+        let buttons = window.toolbar!.items.compactMap { $0.view as? NSSegmentedControl }.first!
+        buttons.selectedSegment = 1
+        _ = NSApp.sendAction(buttons.action!, to: buttons.target, from: buttons)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        try expect(editor.mode == .edit && editor.isEditable, "the mode control did not enter Edit mode")
+        try expect(controller.editorScroll?.documentView === editor,
+                   "Edit mode did not restore the source editor as the document view")
+
+        editor.layoutSubtreeIfNeeded()
+        editor.layoutManager?.ensureLayout(for: editor.textContainer!)
+        // The source must still be intact: rendering never rewrites it.
+        try expect(editor.string == source, "Edit mode lost or rewrote the source")
+        try expect(!document.isDocumentEdited, "merely entering Edit mode marked the document dirty")
+
+        // The editor must be wide enough to lay out text, and must match the
+        // viewport so both modes share the same gutters.
+        guard let scroll = controller.editorScroll, let manager = editor.layoutManager,
+              let container = editor.textContainer else {
+            throw NSError(domain: "mdwrite.mode", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "the editor lost its text container"])
+        }
+        let viewport = scroll.contentSize.width
+        try expect(viewport > 0, "the scroll view has no usable width")
+        try expect(abs(editor.bounds.width - viewport) < 1,
+                   "editor width \(editor.bounds.width) does not match the viewport \(viewport)")
+        let used = manager.usedRect(for: container)
+        try expect(used.width > 0, "the editor laid out no content width, so nothing can render")
+        try expect(manager.glyphRange(for: container).length == (source as NSString).length,
+                   "the editor did not lay out every character of the source")
+        try expect(editor.bitmapImageRepForCachingDisplay(in: editor.bounds) != nil,
+                   "Edit mode cannot produce a display surface, so the document stays blank")
+        print("PASS: Edit mode renders a table document after the projection is replaced")
+    }
+
     static func run() throws {
         func expect(_ condition: Bool, _ message: String) throws {
             if !condition {

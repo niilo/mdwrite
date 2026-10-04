@@ -2,6 +2,236 @@ import Foundation
 import Testing
 @testable import EditorCore
 
+/// GFM table fixture shared by the projection tests. Every table in it must
+/// project to rows of identical rendered width, which is what keeps the pipe
+/// separators in one column.
+private let tableFixture = try! String(
+    contentsOf: URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("tests/fixtures/tables.md"),
+    encoding: .utf8)
+
+@Test func tableFixtureParsesEveryTable() {
+    let tables = MarkdownTables.parse(tableFixture)
+    #expect(tables.count == 7)
+    #expect(tables.map(\.columnCount) == [3, 3, 2, 2, 2, 3, 2])
+    #expect(tables[0].alignments == [.none, .center, .right])
+    #expect(tables[5].alignments == [.left, .center, .right])
+}
+
+@Test func projectedTableRowsAllRenderAtTheSameWidth() throws {
+    let tables = MarkdownTables.parse(tableFixture)
+    let projection = MarkdownTablePresentation.project(tableFixture, tables: tables,
+                                                       style: .pipes)
+    let text = projection.text as NSString
+    for table in tables.indices {
+        let rows = projection.rowRanges.indices.filter { projection.rowOwner[$0] == table }
+        #expect(!rows.isEmpty)
+        let widths = rows.map { MarkdownTableWidth.of(text, range: projection.rowRanges[$0]) }
+        // An escaped cell such as `\|` emits one character less than its source
+        // span, so padding measured from the source pushed that row's separator
+        // out of line with every other row.
+        #expect(Set(widths).count == 1, "table \(table) rows render at widths \(widths)")
+    }
+}
+
+@Test func escapedCellKeepsItsColumnSeparatorAligned() throws {
+    // Regression: `\|` is two source characters but renders as one, so the
+    // column had to be measured from the emitted text rather than the source.
+    let source = "| A | B |\n| --- | --- |\n| x | y |\n| z | \\| |"
+    let projection = MarkdownTablePresentation.project(source, style: .pipes)
+    let rows = projection.rowRanges
+    #expect(rows.count == 3)
+    let rendered = rows.map { (projection.text as NSString).substring(with: $0) }
+    // The escaped cell renders as a single pipe, so this row keeps the same
+    // width as the rows above it instead of gaining a cell.
+    #expect(rendered == ["A |B", "x |y", "z ||"])
+    let widths = rows.map { MarkdownTableWidth.of(projection.text as NSString, range: $0) }
+    #expect(Set(widths).count == 1, "\(rendered)")
+}
+
+@Test func projectionRecordsItsRowStyleInsteadOfInferringItFromPipes() throws {
+    let tables = MarkdownTables.parse(tableFixture)
+    // A cell may legitimately contain a literal pipe. Inferring the style by
+    // searching the text for "|" mistook that content for a separator and
+    // suppressed the tab stops for every other table in the document.
+    #expect(MarkdownTablePresentation.project(tableFixture, tables: tables,
+                                              style: .pipes).rowStyle == .pipes)
+    #expect(MarkdownTablePresentation.project(tableFixture, tables: tables,
+                                              style: .tabs).rowStyle == .tabs)
+    // The stacked overload dropped the caller's style and fell back to tabs,
+    // removing the very separators that keep columns aligned.
+    #expect(MarkdownTablePresentation.project(tableFixture, tables: tables,
+                                              stacked: [], style: .pipes).rowStyle == .pipes)
+    #expect(MarkdownTablePresentation.project(tableFixture, tables: tables,
+                                              stacked: [0], style: .pipes).rowStyle == .pipes)
+}
+
+@Test func cellEscapesAreNotProcessedInsideCodeSpans() throws {
+    func rendered(_ source: String) -> String {
+        let table = try! #require(MarkdownTables.parse(source).first)
+        let cell = table.body[0].cells[0].content
+        return MarkdownTablePresentation.unescapedCell(cell, in: source as NSString)
+            ?? (source as NSString).substring(with: cell)
+    }
+    // Outside a code span the escape is removed.
+    #expect(rendered("| A | B |\n| --- | --- |\n| \\|x | y |") == "|x")
+    // Inside a code span it is literal, per the GFM table rules.
+    #expect(rendered("| A | B |\n| --- | --- |\n| `a\\|b` | y |") == "`a\\|b`")
+    // A run of backticks is closed only by an identical run.
+    #expect(rendered("| A | B |\n| --- | --- |\n| ``a\\|b`` | y |") == "``a\\|b``")
+    // An unmatched run is literal text, so its escapes are still processed.
+    #expect(rendered("| A | B |\n| --- | --- |\n| `a\\|b | y |") == "`a|b")
+}
+
+@Test func tableProjectionPreservesSurroundingProseAndSourceSpans() throws {
+    let tables = MarkdownTables.parse(tableFixture)
+    let projection = MarkdownTablePresentation.project(tableFixture, tables: tables,
+                                                       style: .pipes)
+    // Prose between the tables survives verbatim.
+    #expect(projection.text.contains("Colons can be used to align columns."))
+    #expect(projection.text.contains("You can also use inline Markdown."))
+    // The delimiter rows are structural and never reach the presentation.
+    for table in tables {
+        #expect(!projection.text.contains((tableFixture as NSString)
+            .substring(with: table.delimiter.line)))
+    }
+    // Every row range must address real presentation text on one line.
+    let text = projection.text as NSString
+    for row in projection.rowRanges {
+        #expect(NSMaxRange(row) <= text.length)
+        #expect(row.length > 0)
+    }
+}
+
+@Test func gridIsOnlyApprovedWhenTheProjectedRowActuallyFits() throws {
+    let tables = MarkdownTables.parse(tableFixture)
+    let advance = 12.0
+    // A pipe row is wider than the sum of its cells: each boundary costs a
+    // literal ` |` plus a leading `|`. Estimating without them approved rows
+    // that then overflowed the viewport and wrapped mid-cell.
+    for available in [300.0, 456.0, 800.0, 1200.0] {
+        for table in tables {
+            guard case .grid = MarkdownTableLayoutPlanner.layout(
+                for: table, in: tableFixture, available: available, advance: advance) else {
+                continue
+            }
+            let cells = MarkdownTablePresentation.columnWidths(of: table, in: tableFixture)
+            let projected = Double(1 + cells.reduce(0, +) + (cells.count - 1) * 2) * advance
+            #expect(projected <= available,
+                    "grid approved at \(available) but the row needs \(projected)")
+        }
+    }
+}
+
+@Test func gridColumnsAreNeverNarrowerThanTheirHeaderCells() throws {
+    let tables = MarkdownTables.parse(tableFixture)
+    let text = tableFixture as NSString
+    let advance = 12.0
+    // The header is the label each column is read by, so it must never be the
+    // thing that wraps. Content wider than its header may still wrap.
+    for available in [300.0, 456.0, 800.0, 1200.0] {
+        for (index, table) in tables.enumerated() {
+            guard case let .grid(stops) = MarkdownTableLayoutPlanner.layout(
+                for: table, in: tableFixture, available: available, advance: advance) else {
+                continue
+            }
+            var widths: [Double] = []
+            var previous = 0.0
+            for stop in stops { widths.append(stop - previous); previous = stop }
+            widths.append(max(0, available - previous))
+            for (column, cell) in table.header.cells.enumerated() where column < widths.count {
+                let header = Double(
+                    MarkdownTablePresentation.emittedCellWidth(cell.content, in: text)) * advance
+                #expect(header <= widths[column] + 0.001,
+                        "table \(index) column \(column) header needs \(header) but is \(widths[column])")
+            }
+        }
+    }
+}
+
+@Test func smallTablesStillUseColumnsAtEveryTestedWidth() throws {
+    let source = "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
+    let table = try #require(MarkdownTables.parse(source).first)
+    for available in [200.0, 456.0, 800.0, 1200.0, 1600.0] {
+        guard case let .grid(stops) = MarkdownTableLayoutPlanner.layout(
+            for: table, in: source, available: available, advance: 12.0) else {
+            Issue.record("a two-cell table stacked at \(available)")
+            continue
+        }
+        for stop in stops {
+            #expect(stop <= available, "stop \(stop) exceeds \(available)")
+        }
+    }
+}
+
+@Test func onlyTextIsLeftWrappableInsideCells() {
+    // Text wraps; a code span, link, URL, or path does not. A space inside one
+    // of those becomes U+00A0, which is exactly one UTF-16 unit like the space it
+    // replaced, so every offset in the cell — and the whole map — stays valid.
+    #expect(MarkdownTableAtomicElement.nonBreaking("`git status`") == "`git\u{00A0}status`")
+    #expect(MarkdownTableAtomicElement.nonBreaking("run `git diff` now") == "run `git\u{00A0}diff` now")
+    #expect(MarkdownTableAtomicElement.nonBreaking("``a b c``") == "``a\u{00A0}b\u{00A0}c``")
+    #expect(MarkdownTableAtomicElement.nonBreaking("see /usr/local/bin here")
+            == "see /usr/local/bin here")
+    // Prose keeps ordinary breakable spaces.
+    #expect(MarkdownTableAtomicElement.nonBreaking("plain prose wraps here") == "plain prose wraps here")
+    #expect(MarkdownTableAtomicElement.nonBreaking("**bold** text here") == "**bold** text here")
+    // Length is preserved in every case, which is what keeps the map valid.
+    for value in ["`git status`", "a `b` c `d` e", "see [d](u) now", "no markup at all"] {
+        #expect((MarkdownTableAtomicElement.nonBreaking(value) as NSString).length
+                == (value as NSString).length)
+    }
+}
+
+@Test func linkLabelsAndBareURLsStayOnOneLine() {
+    // A link's label and destination form one clickable element, so a space
+    // inside the label must not offer a wrap point.
+    let label = "[the docs](https://example.com/a)"
+    #expect(MarkdownTableAtomicElement.nonBreaking(label) == "[the\u{00A0}docs](https://example.com/a)")
+    // A bare URL is atomic too, including one embedded in prose.
+    let url = "go https://example.com/x now"
+    #expect(MarkdownTableAtomicElement.nonBreaking(url) == url)
+    // A link destination may not contain a space, so one is prose, not markup.
+    #expect(MarkdownTableAtomicElement.nonBreaking("[d](u) tail") == "[d](u) tail")
+}
+
+@Test func nonBreakingSubstitutionStaysInsideAtomicElements() {
+    // Prose around an element must still wrap; only the element is protected.
+    let value = "first `code span` second"
+    let rendered = MarkdownTableAtomicElement.nonBreaking(value)
+    #expect(rendered.contains("first "))
+    #expect(rendered.contains(" second"))
+    #expect(!rendered.contains("first\u{00A0}"))
+    #expect(!rendered.contains("\u{00A0}second"))
+}
+
+@Test func cellSubstitutionLeavesSourceCopyAndWidthsIntact() throws {
+    let source = "| Command | Description |\n| --- | --- |\n| `git status` | List all new or modified files |\n| `git diff` | See /usr/local/share/notes.txt |"
+    let projection = MarkdownTablePresentation.project(source, style: .pipes)
+    // The presentation protects the code span and the path.
+    #expect(projection.text.contains("\u{00A0}"))
+    // Copy still returns the original Markdown, with real spaces.
+    let rows = projection.rowRanges
+    let first = try #require(rows.first)
+    let last = try #require(rows.last)
+    guard let copied = projection.map.sourceRange(
+        coveringPresentation: NSRange(location: first.location,
+                                       length: NSMaxRange(last) - first.location)) else {
+        Issue.record("the table did not map back to source")
+        return
+    }
+    let substring = (source as NSString).substring(with: copied)
+    #expect(!substring.unicodeScalars.contains("\u{00A0}"))
+    #expect(substring.contains("`git status`"))
+    #expect(substring.contains("/usr/local/share/notes.txt"))
+    // A non-breaking space measures exactly like the space it replaced, so
+    // padded rows stay the same width and their separators stay aligned.
+    let widths = rows.map { MarkdownTableWidth.of(projection.text as NSString, range: $0) }
+    #expect(Set(widths).count == 1, "rows render at \(widths)")
+}
+
 @Test func tableCellsTrimSpacingAndSplitOnUnescapedPipes() throws {
     let source = "|  Name  | Value |\n| --- | --- |\n|  a\\|b  |  2  |"
     let tables = MarkdownTables.parse(source)

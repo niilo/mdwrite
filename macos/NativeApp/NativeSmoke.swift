@@ -110,9 +110,11 @@ enum NativeSmoke {
         try NativeTableChecks.runPresentation()
         try NativeTableChecks.runViewIntegration()
         try NativeTableChecks.runWidthBudget()
+        try NativeTableChecks.runAtomicElementsDoNotWrap()
         try NativeTableChecks.runCellStylingAndResize()
         try NativeLayoutChecks.run()
         try NativeModeChecks.run()
+        try NativeModeChecks.runEditModeRendersTablesDocument()
         try NativePerformanceChecks.run()
         func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
             if !condition() {

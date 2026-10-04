@@ -143,20 +143,47 @@ public enum MarkdownTableLayoutPlanner {
     /// when capping every column still fits the available width. Crucially, the
     /// returned stops never exceed `available`, because a tab stop beyond the
     /// viewport is silently unreachable and collapses the column back inline.
+    ///
+    /// Every column is also floored at its header cell's own width, so a header
+    /// never has to wrap to fit. When honouring those floors overflows the
+    /// viewport the table stacks instead: a wrapped header loses its column
+    /// alignment and reads as broken, while stacked rows stay readable.
+    ///
+    /// `style` must match the style the presentation will actually project.
+    /// Pipe rows are wider than the summed cells alone, because each boundary
+    /// costs a literal ` |`; estimating without those glyphs made the planner
+    /// approve rows that then overflowed the viewport and wrapped mid-cell.
     public static func layout(for table: MarkdownTable, in source: String,
-                              available: Double, advance: Double) -> MarkdownTableLayout {
+                              available: Double, advance: Double,
+                              style: MarkdownTableRowStyle = .pipes) -> MarkdownTableLayout {
         guard advance > 0, available > 0, table.columnCount > 1 else { return .stacked }
         let text = source as NSString
         var widest: [Double] = Array(repeating: 0, count: table.columnCount)
+        // Measure what the presentation emits, not the raw source span: an
+        // escaped cell such as `\|` renders one character narrower than it is
+        // written, and measuring the source would budget a cell that never
+        // reaches the screen.
         for row in table.rows {
             for (column, cell) in row.cells.enumerated() where column < widest.count {
-                let cells = MarkdownTableWidth.of(text, range: cell.content)
+                let cells = MarkdownTablePresentation.emittedCellWidth(cell.content, in: text)
                 widest[column] = max(widest[column], Double(cells) * advance)
             }
         }
+        // The header sets a per-column floor. Content wider than its header still
+        // wraps, but the header itself is the label every column is read by, so
+        // it is never the thing that gives way.
+        for (column, cell) in table.header.cells.enumerated() where column < widest.count {
+            let cells = MarkdownTablePresentation.emittedCellWidth(cell.content, in: text)
+            widest[column] = max(widest[column], Double(cells) * advance)
+        }
         let minimum = max(minimumColumnWidth, advance * 4)
         let content = widest.map { max($0 + columnPadding, minimum) }
-        let total = content.reduce(0, +)
+        // Count the glyphs the row style adds on top of its cells: a leading
+        // `|` and a ` |` before every column but the first.
+        var total = content.reduce(0, +)
+        if style == .pipes {
+            total += Double(1 + 2 * (table.columnCount - 1)) * advance
+        }
         guard total <= available else { return .stacked }
         // Walk the boundaries, never emitting a stop past the right edge.
         var stops: [Double] = []
@@ -182,6 +209,68 @@ public enum MarkdownTableRowStyle: Equatable, Sendable {
     case pipes
 }
 
+/// Inline constructs that read as one unit and must never be split by wrapping.
+///
+/// Text is the only thing allowed to wrap. A code span, a link, a URL, or a bare
+/// path broken across two lines stops reading as the thing it is: `` `git diff` ``
+/// becomes a dangling backtick and a stray word. These are found in the emitted
+/// cell text so the same scan covers a cell written directly in Markdown and one
+/// that only became markup after unescaping.
+public enum MarkdownTableAtomicElement {
+    /// Code spans first: a `|` or a space inside them belongs to the span.
+    private static let patterns = [
+        ##"`+[^`]*`+"##,                                    // code span
+        ##"!?\[[^\]]*\]\([^)\s]*\)"##,                      // link or image
+        ##"(?:https?|ftp)://[^\s<>()\[\]]+"##,               // bare URL
+        ##"(?:^|(?<=[\s(]))[~]?(?:/|\.{1,2}/)[^\s<>()\[\]]*"##, // path
+    ]
+
+    /// UTF-16 ranges in `value` that must stay on one line.
+    public static func ranges(in value: String) -> [NSRange] {
+        guard !value.isEmpty else { return [] }
+        var found: [NSRange] = []
+        for pattern in patterns {
+            found.append(contentsOf: EditorBehavior.matches(pattern, in: value).map(\.range))
+        }
+        return found
+    }
+
+    /// Replace the breakable spaces inside atomic elements with U+00A0.
+    ///
+    /// A non-breaking space is one UTF-16 unit, exactly like the space it
+    /// replaces, so every offset in the cell — and therefore the whole
+    /// source/presentation map — stays valid. Only the presentation is rewritten;
+    /// `sourceStorage` keeps the original characters, so saving is byte-exact.
+    static func nonBreaking(_ value: String) -> String {
+        let protected = ranges(in: value)
+        guard !protected.isEmpty, value.contains(" ") else { return value }
+        var scalars = Array(value.unicodeScalars)
+        // Convert UTF-16 offsets to scalar offsets once, rather than per match.
+        var unitToScalar: [Int] = [0]
+        for scalar in scalars {
+            unitToScalar.append(unitToScalar[unitToScalar.count - 1]
+                                + (scalar.isASCII ? 1 : scalar.utf16.count))
+        }
+        // Walk matches high to low so a match never shifts the offsets of one
+        // that has not been handled yet.
+        for range in protected.sorted(by: { $0.location > $1.location }) {
+            for unit in stride(from: NSMaxRange(range) - 1, through: range.location, by: -1)
+            where unit < unitToScalar.count - 1 {
+                let scalar = unitToScalar[unit]
+                if scalar < scalars.count, scalars[scalar] == " " {
+                    scalars[scalar] = "\u{00A0}"
+                }
+            }
+        }
+        return String(String.UnicodeScalarView(scalars))
+    }
+
+    /// Widest atomic element in `value`, in rendered cells; 0 when it has none.
+    static func widestWidth(in value: String) -> Int {
+        ranges(in: value).map { MarkdownTableWidth.of(value as NSString, range: $0) }.max() ?? 0
+    }
+}
+
 /// Renders a table to plain text and records the map back to its source.
 /// Layout is deliberately one line per source row: column geometry and cell
 /// padding are resolved by the native adapter, not here.
@@ -195,6 +284,10 @@ public enum MarkdownTablePresentation {
         public var rowOwner: [Int] = []
         /// Left indent in points for each row, from an enclosing quote or list.
         public var rowIndent: [Double] = []
+        /// How rows separate their columns. The adapter reads this instead of
+        /// searching the text for a pipe: a cell whose content legitimately
+        /// contains a literal `|` looks identical to a pipe separator.
+        public var rowStyle: MarkdownTableRowStyle = .tabs
     }
 
     /// Build the presentation for one table. Cell content is copied verbatim so
@@ -246,7 +339,10 @@ public enum MarkdownTablePresentation {
     public static func project(_ source: String, tables: [MarkdownTable],
                                stacked: Set<Int>,
                                style: MarkdownTableRowStyle = .tabs) -> Result {
-        guard !stacked.isEmpty else { return project(source, tables: tables) }
+        // Forward the caller's style. Falling back to the default here silently
+        // switched a pipe-styled document back to tabs, which dropped the very
+        // separators that keep columns aligned.
+        guard !stacked.isEmpty else { return project(source, tables: tables, style: style) }
         let text = source as NSString
         var output = ""
         var segments: [MarkdownTableMapSegment] = []
@@ -264,14 +360,30 @@ public enum MarkdownTablePresentation {
         }
         func appendCell(_ range: NSRange) {
             if let unescaped = unescapedCell(range, in: text) {
+                // Text may wrap; an atomic element inside it may not. The
+                // substitution is UTF-16 length preserving, so the presentation
+                // range still lines up with the source range it points at.
+                let rendered = MarkdownTableAtomicElement.nonBreaking(unescaped)
                 let presentation = NSRange(location: (output as NSString).length,
-                                            length: (unescaped as NSString).length)
-                output += unescaped
+                                            length: (rendered as NSString).length)
+                output += rendered
                 segments.append(MarkdownTableMapSegment(kind: .verbatim(range),
                                                         presentation: presentation, source: range))
             } else {
-                appendVerbatim(range)
+                appendCellVerbatim(range)
             }
+        }
+        /// A cell with no escapes still needs its atomic elements protected, so
+        /// it cannot share the plain verbatim path used for surrounding prose.
+        func appendCellVerbatim(_ range: NSRange) {
+            guard range.length > 0 else { return }
+            let value = text.substring(with: range)
+            let rendered = MarkdownTableAtomicElement.nonBreaking(value)
+            let presentation = NSRange(location: (output as NSString).length,
+                                        length: (rendered as NSString).length)
+            output += rendered
+            segments.append(MarkdownTableMapSegment(kind: .verbatim(range), presentation: presentation,
+                                                    source: range))
         }
 
         func appendHidden(_ range: NSRange) {
@@ -339,25 +451,69 @@ public enum MarkdownTablePresentation {
                             rowRanges: rowRanges)
         result.rowOwner = rowOwner
         result.rowIndent = rowIndent
+        result.rowStyle = style
         return result
     }
 
     /// Cell content is shown unescaped: a literal `\|` reads as a pipe, while the
     /// map still points at the original two source characters.
+    ///
+    /// Backslash escapes are not processed inside a code span, so `` `a\|b` ``
+    /// keeps its backslash. Unescaping there would change the rendered cell and
+    /// the cell's measured width, which is how a code cell ends up misaligned.
     static func unescapedCell(_ range: NSRange, in text: NSString) -> String? {
         let value = text.substring(with: range)
         guard value.contains("\\") else { return nil }
         let scalars = Array(value.unicodeScalars)
+        // Locate the backtick runs first, so a run is only treated as a code
+        // delimiter when an identical run later closes it. An unmatched run is
+        // literal text, so escapes beside it are still processed.
+        var runs: [(start: Int, length: Int)] = []
+        var scan = 0
+        while scan < scalars.count {
+            guard scalars[scan] == "`" else { scan += 1; continue }
+            var length = 0
+            while scan + length < scalars.count, scalars[scan + length] == "`" { length += 1 }
+            runs.append((scan, length))
+            scan += length
+        }
+        var codeSpans: [Range<Int>] = []
+        var open: (start: Int, length: Int)?
+        for run in runs {
+            guard let pending = open else {
+                open = run
+                continue
+            }
+            if pending.length == run.length {
+                codeSpans.append(pending.start..<run.start + run.length)
+                open = nil
+            }
+        }
         var out = String.UnicodeScalarView()
         var index = 0
         while index < scalars.count {
-            if scalars[index] == "\\", index + 1 < scalars.count {
+            if scalars[index] == "\\", index + 1 < scalars.count,
+               !codeSpans.contains(where: { $0.contains(index) }) {
                 out.append(scalars[index + 1]); index += 2
-            } else {
-                out.append(scalars[index]); index += 1
+                continue
             }
+            out.append(scalars[index]); index += 1
         }
         return String(out)
+    }
+
+    /// Rendered width of a cell as the presentation actually emits it.
+    ///
+    /// Width must be measured after unescaping, because `appendCell` writes the
+    /// unescaped text. Measuring the source span instead over-counts every
+    /// escape by one character: a `\|` cell is two source characters but one
+    /// rendered cell, so the column would be padded one cell too wide and that
+    /// row's separator would sit past the other rows'.
+    static func emittedCellWidth(_ range: NSRange, in text: NSString) -> Int {
+        if let unescaped = unescapedCell(range, in: text) {
+            return MarkdownTableWidth.of(unescaped)
+        }
+        return MarkdownTableWidth.of(text, range: range)
     }
 
     /// Separator emitted before a given column.
@@ -372,7 +528,7 @@ public enum MarkdownTablePresentation {
         var widths = [Int](repeating: 0, count: max(1, table.columnCount))
         for row in table.rows {
             for (column, cell) in row.cells.enumerated() where column < widths.count {
-                widths[column] = max(widths[column], MarkdownTableWidth.of(text, range: cell.content))
+                widths[column] = max(widths[column], emittedCellWidth(cell.content, in: text))
             }
         }
         return widths
@@ -442,9 +598,11 @@ public enum MarkdownTablePresentation {
                     }
                     appendCell(cell.content)
                     // In pipe mode each cell is padded so the following separator
-                    // lands in the same column on every row.
+                    // lands in the same column on every row. Measure the emitted
+                    // text, not the source span, or an escaped cell such as `\|`
+                    // is padded one cell short and its separator drifts right.
                     if style == .pipes, column < widths.count {
-                        let used = MarkdownTableWidth.of(text, range: cell.content)
+                        let used = emittedCellWidth(cell.content, in: text)
                         if used < widths[column] {
                             appendGenerated(String(repeating: " ", count: widths[column] - used))
                         }
@@ -497,14 +655,30 @@ public enum MarkdownTablePresentation {
         }
         func appendCell(_ range: NSRange) {
             if let unescaped = unescapedCell(range, in: text) {
+                // Text may wrap; an atomic element inside it may not. The
+                // substitution is UTF-16 length preserving, so the presentation
+                // range still lines up with the source range it points at.
+                let rendered = MarkdownTableAtomicElement.nonBreaking(unescaped)
                 let presentation = NSRange(location: (output as NSString).length,
-                                            length: (unescaped as NSString).length)
-                output += unescaped
+                                            length: (rendered as NSString).length)
+                output += rendered
                 segments.append(MarkdownTableMapSegment(kind: .verbatim(range),
                                                         presentation: presentation, source: range))
             } else {
-                appendVerbatim(range)
+                appendCellVerbatim(range)
             }
+        }
+        /// A cell with no escapes still needs its atomic elements protected, so
+        /// it cannot share the plain verbatim path used for surrounding prose.
+        func appendCellVerbatim(_ range: NSRange) {
+            guard range.length > 0 else { return }
+            let value = text.substring(with: range)
+            let rendered = MarkdownTableAtomicElement.nonBreaking(value)
+            let presentation = NSRange(location: (output as NSString).length,
+                                        length: (rendered as NSString).length)
+            output += rendered
+            segments.append(MarkdownTableMapSegment(kind: .verbatim(range), presentation: presentation,
+                                                    source: range))
         }
 
         func appendHidden(_ range: NSRange) {
@@ -541,6 +715,7 @@ public enum MarkdownTablePresentation {
                             rowRanges: rowRanges)
         result.rowOwner = rowOwner
         result.rowIndent = rowIndent
+        result.rowStyle = style
         return result
     }
 

@@ -15,7 +15,7 @@ final class MarkdownTablePresentationView: NSTextView {
     /// Band rects for the rows in a character range, computed on demand rather
     /// than read from the last draw. Drawing re-enters, so the most recent pass
     /// is not a reliable record of what is on screen.
-    func debugTableRowRects() -> [(owner: Int, rect: NSRect)] {
+    func debugTableRowRects() -> [(owner: Int, rowID: Int, rect: NSRect)] {
         guard let manager = layoutManager as? MarkdownLayoutManager,
               let storage = textStorage else { return [] }
         return manager.debugRowRects(in: storage)
@@ -63,7 +63,10 @@ final class MarkdownTablePresentationView: NSTextView {
         self.projection = projection
         projectedSource = source
         columnsFit = !stops.isEmpty
-        usesPipes = projection.text.contains("|")
+        // Read the recorded style rather than searching the text for a pipe: a
+        // cell may legitimately contain a literal `|`, and treating that content
+        // as a separator suppressed the tab stops for every other table.
+        usesPipes = projection.rowStyle == .pipes
         guard let storage = textStorage else { return false }
         // Replacing the storage leaves the old glyphs in place: a previous
         // projection may have wrapped at a different width, so its glyph
@@ -279,10 +282,16 @@ final class MarkdownTablePresentationView: NSTextView {
             widthsByShape[key] = widths
         }
         let minimum = max(MarkdownTableLayoutPlanner.minimumColumnWidth, advance * 4)
-        // The widest shape must fit, otherwise no grid is possible.
+        // The widest shape must fit, otherwise no grid is possible. Include the
+        // separators the row style will actually draw, so a shape is not
+        // approved here and then found to overflow once its pipes are added.
+        var extra: Double = 0
+        if projection.rowStyle == .pipes, let widest = widthsByShape.values.max(by: { $0.count < $1.count }) {
+            extra = Double(1 + 2 * (widest.count - 1)) * advance
+        }
         for (_, widths) in widthsByShape {
             let padded = widths.map { max($0 + MarkdownTableLayoutPlanner.columnPadding, minimum) }
-            let total = padded.reduce(0, +)
+            let total = padded.reduce(0, +) + extra
             guard total <= available else { return [] }
         }
         // Rows with more columns than any other shape are stacked instead.

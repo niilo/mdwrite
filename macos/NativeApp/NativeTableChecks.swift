@@ -339,6 +339,71 @@ enum NativeTableChecks {
         print("PASS: column geometry never emits a tab stop beyond the usable width and falls back to stacked rows")
     }
 
+    /// Text is the only thing allowed to wrap inside a cell. A code span, link,
+    /// URL, or path must stay on one visual line, or it stops reading as the
+    /// thing it is once the line breaks through it.
+    ///
+    /// This asserts against real AppKit line fragments rather than the projected
+    /// string: the substitution is only worth anything if the layout manager
+    /// actually refuses to break there.
+    static func runAtomicElementsDoNotWrap() throws {
+        func expect(_ condition: Bool, _ message: String) throws {
+            if !condition {
+                throw NSError(domain: "mdwrite.tables", code: 20,
+                              userInfo: [NSLocalizedDescriptionKey: message])
+            }
+        }
+        let source = """
+        | Command | Description |
+        | --- | --- |
+        | `git status` | List all new or modified files in the working tree |
+        | `git diff` | See /usr/local/share/notes.txt |
+        | x | plain prose that is long enough to need wrapping in this narrow column |
+
+        """
+        let projection = MarkdownTablePresentation.project(source, style: .pipes)
+        let text = projection.text
+
+        // Lay the projection out at a width narrow enough that prose must wrap.
+        let container = NSTextContainer(size: NSSize(width: 300, height: 4000))
+        let manager = NSLayoutManager()
+        manager.addTextContainer(container)
+        let storage = NSTextStorage(attributedString: NSAttributedString(string: text))
+        storage.addLayoutManager(manager)
+        manager.ensureLayout(for: container)
+
+        func lineY(at character: Int) -> CGFloat {
+            let glyph = manager.glyphRange(
+                forCharacterRange: NSRange(location: character, length: 1),
+                actualCharacterRange: nil).location
+            return manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+        }
+
+        // Prose must actually wrap at this width, or the check below proves nothing.
+        let nsText = text as NSString
+        let proseStart = nsText.range(of: "plain prose")
+        try expect(proseStart.location != NSNotFound, "fixture prose row is missing")
+        let tail = NSRange(location: proseStart.location, length: nsText.length - proseStart.location)
+        let proseEnd = nsText.range(of: "in this narrow column", options: [], range: tail)
+        try expect(proseEnd.location != NSNotFound, "fixture prose tail is missing")
+        try expect(abs(lineY(at: proseStart.location) - lineY(at: proseEnd.location)) > 0.5,
+                   "the fixture prose did not wrap, so this check would be vacuous")
+
+        // No atomic element may straddle a line boundary.
+        let elements = MarkdownTableAtomicElement.ranges(in: text)
+        try expect(!elements.isEmpty, "no atomic element found in the projection")
+        for element in elements {
+            let label = nsText.substring(with: element)
+            try expect(abs(lineY(at: element.location) - lineY(at: NSMaxRange(element) - 1)) < 0.5,
+                       "an atomic element was split across lines: [\(label)]")
+        }
+
+        // The substitution must reach the projection, and stay out of source.
+        try expect(nsText.contains("\u{00A0}"), "no space was made non-breaking")
+        try expect(!source.unicodeScalars.contains("\u{00A0}"), "the source was rewritten")
+        print("PASS: only text wraps; code spans, links, and paths stay on one line")
+    }
+
     /// Inline markup inside cells must render, and a resize must re-evaluate
     /// the column layout so a stacked table can become a grid.
     static func runCellStylingAndResize() throws {
@@ -444,6 +509,9 @@ enum NativeTableChecks {
         view.setFrameSize(target.size)
         view.layoutSubtreeIfNeeded()
         controller.editorScroll?.layoutSubtreeIfNeeded()
+        // Read before the pixel sampling below, which needs the same storage to
+        // find which runs carry a code background.
+        let storage = view.textStorage!
 
         // Row rectangles are computed from the attributed rows rather than read
         // back from painting, so the geometry assertions do not depend on draw
@@ -532,13 +600,16 @@ enum NativeTableChecks {
             0.2126 * rgb.0 + 0.7152 * rgb.1 + 0.0722 * rgb.2
         }
 
+        let headerIDs = headerRowIDs(in: storage)
         for table in owners {
             let tableRows = settled.filter { $0.owner == table }
             guard !tableRows.isEmpty else { continue }
             // Collect every in-band sample for the whole table first, so the two
             // tones are the table's actual fills and not one row's outliers.
             var bands: [[(Double, Double, Double)]] = []
+            var bandRowIDs: [Int] = []
             for entry in tableRows {
+                bandRowIDs.append(entry.rowID)
                 let rect = entry.rect
                 var samples: [(Double, Double, Double)] = []
                 // Inset from the band edges. A row's rect is the union of its
@@ -587,6 +658,10 @@ enum NativeTableChecks {
                                     "table \(table) row \(index) painted nothing"])
                 }
                 let bright = values.filter { $0 >= peak - 0.03 }.sorted()
+                // A header is painted with its own background, so its tone is a
+                // third colour by design rather than a striping fault. Counting it
+                // is what made this assertion fail on whichever table was sampled.
+                if headerIDs.contains(bandRowIDs[index]) { continue }
                 tones.append(bright[bright.count / 2])
             }
             var clusters: [Double] = []
@@ -595,8 +670,14 @@ enum NativeTableChecks {
                 clusters.append(value)
             }
             // At most two fills per table: the background plus one zebra tone.
-            // A row painted several shades is the striping bug, and it shows up
-            // as a third or fourth cluster.
+            // A body row painted several shades is the striping bug, and it shows
+            // up as a third or fourth cluster.
+            //
+            // The header row is excluded from that count. A header is painted with
+            // its own background on purpose, so its tone is a third colour by
+            // design rather than a striping fault, and counting it made this
+            // assertion fail on whichever table happened to be sampled. Header
+            // styling is verified separately, from the storage attributes.
             //
             // The converse is deliberately not asserted. Requiring both tones to
             // be present depends on the capture coming from a view that has
@@ -615,7 +696,6 @@ enum NativeTableChecks {
         // of a table must carry ordinals 0, 1, 2, ... in document order, so the
         // layout manager's parity is a pure function of position and cannot drift
         // with how AppKit chunks a draw call.
-        let storage = view.textStorage!
         var ordinalsByOwner: [Int: [Int]] = [:]
         var expectedNext: [Int: Int] = [:]
         storage.enumerateAttribute(.mdwriteTableRow, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
@@ -685,6 +765,37 @@ Markdown | Less | Pretty
 """
 
     static func fixture(_ name: String) -> String { tableFixture }
+
+    /// Row identifiers in `storage` that the layout manager marked as a first row.
+    ///
+    /// A header is styled with its own background, so its tone is a third fill
+    /// beside the background and the zebra tone. That is the design, not a
+    /// striping fault, so the zebra tone count must skip those rows.
+    ///
+    /// The projection tags the header with `.mdwriteTableIsFirstRow`, so this is
+    /// read from the attributes rather than inferred from row order.
+    private static func headerRowIDs(in storage: NSTextStorage) -> Set<Int> {
+        var ids: Set<Int> = []
+        storage.enumerateAttribute(.mdwriteTableIsFirstRow,
+                                   in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard (value as? Bool) == true,
+                  let rowID = storage.attribute(.mdwriteTableRow, at: range.location,
+                                                effectiveRange: nil) as? Int else { return }
+            ids.insert(rowID)
+        }
+        return ids
+    }
+
+    /// Character ranges in `storage` carrying `key`, for excluding a styled run
+    /// from pixel sampling.
+    private static func storageRanges(of key: NSAttributedString.Key,
+                                       in storage: NSTextStorage) -> [NSRange] {
+        var ranges: [NSRange] = []
+        storage.enumerateAttribute(key, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if value != nil { ranges.append(range) }
+        }
+        return ranges
+    }
 
     /// Reads a single pixel as a packed RGBA string, or nil when outside bounds.
     ///

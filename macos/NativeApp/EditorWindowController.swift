@@ -268,7 +268,7 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
               presentationView.install(projection: projection, source: source,
                                        fontSize: editor.writerFontSize, available: available) else {
             presentationViewInstalled = false
-            if scroll.documentView !== editor { scroll.documentView = editor }
+            if scroll.documentView !== editor { showDocumentView(editor) }
             return
         }
         presentationViewInstalled = true
@@ -278,9 +278,31 @@ final class EditorWindowController: NSWindowController, NSTextViewDelegate, NSTo
         let position = presentationView.sourceOffset(forPresentation: caret) ?? 0
         presentationView.setSelectedRange(NSRange(location: min(position, length), length: 0))
         if scroll.documentView !== presentationView {
-            scroll.documentView = presentationView
+            showDocumentView(presentationView)
         }
         presentationView.textContainerInset = editor.textContainerInset
+    }
+
+    /// Swap the scroll view's document view, keeping its width in step with the
+    /// clip view.
+    ///
+    /// `NSScrollView` does not resize a document view when it is re-attached, and
+    /// autoresizing only propagates when the clip view itself changes size. The
+    /// editor starts at the scroll view's content width, which is zero before the
+    /// window lays out; a document without tables recovered when the clip view
+    /// first sized itself, but one whose editor the projection had replaced never
+    /// did, because no further resize happened. The editor came back at that zero
+    /// width and Edit mode rendered nothing at all. Restoring it explicitly keeps
+    /// both modes the same width without depending on a resize that never comes.
+    private func showDocumentView(_ view: NSView) {
+        guard let scroll = editorScroll else {
+            view.removeFromSuperview()
+            return
+        }
+        scroll.documentView = view
+        let width = scroll.contentSize.width
+        guard width > 0, view.frame.width != width else { return }
+        view.setFrameSize(NSSize(width: width, height: view.frame.height))
     }
 
     /// Rebuild the projection when the usable width changes.

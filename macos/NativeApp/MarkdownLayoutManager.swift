@@ -157,7 +157,7 @@ final class MarkdownLayoutManager: NSLayoutManager {
 
     /// Computes row band rectangles without drawing. Used by tests so
     /// assertions do not depend on when AppKit last painted.
-    func debugRowRects(in storage: NSTextStorage) -> [(owner: Int, rect: NSRect)] {
+    func debugRowRects(in storage: NSTextStorage) -> [(owner: Int, rowID: Int, rect: NSRect)] {
         let attached: [NSTextContainer] = self.textContainers
         guard let container = attached.first else { return [] }
         // The caller passes the exact storage it wants measured: the smoke
@@ -191,12 +191,12 @@ final class MarkdownLayoutManager: NSLayoutManager {
         // edges, and relative order) while making any pixel sampled against
         // these rects land on the wrong row entirely.
         let origin = lastTableDrawOrigin
-        return order.compactMap { rowID -> (owner: Int, rect: NSRect)? in
+        return order.compactMap { rowID -> (owner: Int, rowID: Int, rect: NSRect)? in
             guard let entry = merged[rowID] else { return nil }
             let width = widest[entry.owner] ?? entry.rect.width
-            return (entry.owner, NSRect(x: entry.rect.minX + origin.x,
-                                        y: entry.rect.minY + origin.y,
-                                        width: width, height: entry.rect.height))
+            return (entry.owner, rowID, NSRect(x: entry.rect.minX + origin.x,
+                                               y: entry.rect.minY + origin.y,
+                                               width: width, height: entry.rect.height))
         }
     }
 
